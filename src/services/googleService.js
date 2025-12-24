@@ -48,9 +48,36 @@ export const searchProductInfo = async (productName, brand = '', url = '') => {
       imageUrl = await getProductImage(productName, brand)
     }
 
-    // Eğer açıklama yoksa, oluştur
-    if (!description || description.length < 20) {
-      description = await generateDescription(productName, brand)
+    // Eğer açıklama generic ise (fallback açıklama), tekrar dene
+    if (!description || description.length < 30 || description.includes('Yüksek kaliteli ve güvenilir ürün')) {
+      // API'den gelen açıklama generic ise, tekrar scraping yapmayı dene
+      if (scrapedInfo.url) {
+        try {
+          const retryResponse = await axios.post(`${import.meta.env.DEV ? 'http://localhost:3000/api' : '/api'}/scrape`, {
+            productName,
+            brand,
+            url: scrapedInfo.url
+          }, {
+            timeout: 20000
+          })
+          
+          if (retryResponse.data && retryResponse.data.description && 
+              retryResponse.data.description.length > 50 &&
+              !retryResponse.data.description.includes('Yüksek kaliteli ve güvenilir ürün')) {
+            description = retryResponse.data.description
+            if (retryResponse.data.image) {
+              imageUrl = retryResponse.data.image
+            }
+          }
+        } catch (retryError) {
+          console.warn('Retry scraping failed:', retryError.message)
+        }
+      }
+      
+      // Hala yoksa, generic açıklama oluştur
+      if (!description || description.length < 30 || description.includes('Yüksek kaliteli ve güvenilir ürün')) {
+        description = await generateDescription(productName, brand)
+      }
     }
     
     return {

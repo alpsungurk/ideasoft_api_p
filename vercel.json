@@ -20,6 +20,18 @@
     },
     "api/get-token.js": {
       "maxDuration": 10
+    },
+    "api/exchange-token.js": {
+      "maxDuration": 10
+    },
+    "api/categories.js": {
+      "maxDuration": 10
+    },
+    "api/products.js": {
+      "maxDuration": 10
+    },
+    "api/product-to-categories.js": {
+      "maxDuration": 10
     }
   }
 }

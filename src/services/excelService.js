@@ -45,6 +45,7 @@ export const readExcelFile = (file) => {
 
 /**
  * Fiyat değerini parse et (TL, ₺, virgül, nokta gibi karakterleri temizle)
+ * "$ 1.200,00" formatını destekler
  * @param {any} value - Fiyat değeri
  * @returns {number} Parse edilmiş fiyat
  */
@@ -69,28 +70,45 @@ const parsePrice = (value) => {
   // Boşlukları kaldır
   priceStr = priceStr.replace(/\s/g, '')
   
-  // Türkçe format: 1.234,56 -> 1234.56
-  // Eğer son virgülden önce 2 haneli sayı varsa (kuruş), virgülü noktaya çevir
+  // Özel format kontrolü: "$ 1.200,00" formatı (nokta binlik, virgül ondalık)
+  // Eğer hem nokta hem virgül varsa ve virgül noktadan sonra geliyorsa
   const commaIndex = priceStr.lastIndexOf(',')
   const dotIndex = priceStr.lastIndexOf('.')
   
-  if (commaIndex > dotIndex) {
-    // Virgül noktadan sonra geliyorsa (Türkçe format: 1.234,56)
-    // Noktaları kaldır, virgülü noktaya çevir
-    priceStr = priceStr.replace(/\./g, '').replace(',', '.')
-  } else if (dotIndex > commaIndex) {
-    // Nokta virgülden sonra geliyorsa (İngilizce format: 1,234.56)
-    // Virgülleri kaldır
+  if (commaIndex > dotIndex && commaIndex !== -1 && dotIndex !== -1) {
+    // Türkçe/Avrupa formatı: 1.234,56 veya 1.200,00
+    // Virgülden sonraki kısmı kontrol et (ondalık kısım)
+    const afterComma = priceStr.substring(commaIndex + 1)
+    if (afterComma.length <= 2) {
+      // Kuruş formatı (1.200,00 veya 1.234,56)
+      // Tüm noktaları kaldır (binlik ayırıcılar), virgülü noktaya çevir
+      priceStr = priceStr.replace(/\./g, '').replace(',', '.')
+    } else {
+      // Beklenmeyen format, sadece noktaları kaldır
+      priceStr = priceStr.replace(/\./g, '').replace(',', '.')
+    }
+  } else if (dotIndex > commaIndex && dotIndex !== -1 && commaIndex !== -1) {
+    // İngilizce format: 1,234.56
+    // Virgülleri kaldır (binlik ayırıcılar)
     priceStr = priceStr.replace(/,/g, '')
-  } else if (commaIndex !== -1) {
-    // Sadece virgül varsa, noktaya çevir (kuruş için)
+  } else if (commaIndex !== -1 && dotIndex === -1) {
+    // Sadece virgül var
     const afterComma = priceStr.substring(commaIndex + 1)
     if (afterComma.length <= 2) {
       // Kuruş formatı (123,45)
       priceStr = priceStr.replace(',', '.')
     } else {
-      // Binlik ayırıcı (1,234)
+      // Binlik ayırıcı olabilir, virgülü kaldır
       priceStr = priceStr.replace(/,/g, '')
+    }
+  } else if (dotIndex !== -1 && commaIndex === -1) {
+    // Sadece nokta var
+    const afterDot = priceStr.substring(dotIndex + 1)
+    if (afterDot.length <= 2) {
+      // Ondalık formatı (123.45) - olduğu gibi bırak
+    } else {
+      // Binlik ayırıcı olabilir, noktaları kaldır
+      priceStr = priceStr.replace(/\./g, '')
     }
   }
   
@@ -116,45 +134,64 @@ export const mapExcelColumns = (excelData) => {
   return excelData.map((row, index) => {
     const product = {}
     
-    // Yaygın sütun isimlerini eşleştir
+    // Excel yapısına göre spesifik kolon eşleştirmeleri
     columns.forEach(col => {
       const colLower = col.toLowerCase().trim()
       
-      // Ürün adı
-      if ((colLower.includes('ürün') && (colLower.includes('ad') || colLower.includes('isim'))) || 
-          colLower.includes('name') || 
-          colLower.includes('title') ||
-          colLower === 'ürün' ||
-          colLower === 'product') {
-        product.name = row[col] || ''
-      } 
-      // SKU
-      else if (colLower.includes('kod') || 
-               colLower.includes('sku') || 
-               colLower.includes('barkod') ||
-               colLower === 'kod' ||
-               colLower === 'sku') {
-        product.sku = row[col] || ''
-      } 
-      // FİYAT - sadece "fiyat" içeriyorsa
-      else if (colLower.includes('fiyat') || 
-               colLower.includes('price') ||
-               colLower === 'fiyat' ||
-               colLower === 'price') {
+      // SAP -> SKU
+      if (colLower === 'sap') {
+        product.sku = String(row[col] || '').trim()
+      }
+      // ÜRETİCİ KODU -> manufacturerCode
+      else if (colLower === 'üretici kodu' || colLower === 'üretici_kodu' || colLower.includes('üretici') && colLower.includes('kod')) {
+        product.manufacturerCode = String(row[col] || '').trim()
+      }
+      // MODEL NAME -> name
+      else if (colLower === 'model name' || colLower === 'model_name' || colLower === 'model' || 
+               (colLower.includes('model') && colLower.includes('name'))) {
+        product.name = String(row[col] || '').trim()
+      }
+      // GÜNE ÖZEL Fİ -> price
+      else if (colLower === 'güne özel fi' || colLower === 'güne_özel_fi' || 
+               colLower.includes('güne') && colLower.includes('özel') ||
+               colLower.includes('fiyat') || colLower.includes('price')) {
         const priceValue = row[col]
         
         // Eğer zaten sayı ise direkt kullan
         if (typeof priceValue === 'number' && !isNaN(priceValue)) {
           product.price = priceValue
         } else {
-          // String ise parse et
+          // String ise parse et (format: "$ 1.200,00" -> 1200.00)
           const parsedPrice = parsePrice(priceValue)
           product.price = parsedPrice
         }
         
-        // Debug için (production'da kaldırılabilir)
+        // Debug için
         if (index === 0) {
           console.log(`Fiyat kolonu bulundu: "${col}" = "${priceValue}" (${typeof priceValue}) -> ${product.price}`)
+        }
+      }
+      // KATEGORİ -> category
+      else if (colLower === 'kategori' || colLower === 'category' || colLower.includes('kategori')) {
+        product.category = String(row[col] || '').trim()
+      }
+      // Genel eşleştirmeler (geriye dönük uyumluluk için)
+      // Ürün adı
+      else if ((colLower.includes('ürün') && (colLower.includes('ad') || colLower.includes('isim'))) || 
+               colLower.includes('name') || 
+               colLower.includes('title') ||
+               colLower === 'ürün' ||
+               colLower === 'product') {
+        if (!product.name) {
+          product.name = String(row[col] || '').trim()
+        }
+      } 
+      // SKU (genel)
+      else if (colLower.includes('sku') || 
+               colLower.includes('barkod') ||
+               colLower === 'sku') {
+        if (!product.sku) {
+          product.sku = String(row[col] || '').trim()
         }
       } 
       // Stok
@@ -171,14 +208,7 @@ export const mapExcelColumns = (excelData) => {
                colLower.includes('desc') ||
                colLower === 'açıklama' ||
                colLower === 'description') {
-        product.description = row[col] || ''
-      } 
-      // Kategori
-      else if (colLower.includes('kategori') || 
-               colLower.includes('category') ||
-               colLower === 'kategori' ||
-               colLower === 'category') {
-        product.category = row[col] || ''
+        product.description = String(row[col] || '').trim()
       } 
       // Resim
       else if (colLower.includes('resim') || 
@@ -186,14 +216,14 @@ export const mapExcelColumns = (excelData) => {
                colLower.includes('foto') ||
                colLower === 'resim' ||
                colLower === 'image') {
-        product.image = row[col] || ''
+        product.image = String(row[col] || '').trim()
       } 
       // Marka
       else if (colLower.includes('marka') || 
                colLower.includes('brand') ||
                colLower === 'marka' ||
                colLower === 'brand') {
-        product.brand = row[col] || ''
+        product.brand = String(row[col] || '').trim()
       }
     })
     
@@ -202,16 +232,30 @@ export const mapExcelColumns = (excelData) => {
       console.log('İlk ürün parse edildi:', product)
     }
     
-    // Eğer name yoksa, ilk sütunu name olarak kullan
+    // Eğer name yoksa, MODEL NAME veya ilk sütunu name olarak kullan
     if (!product.name && columns.length > 0) {
-      product.name = row[columns[0]] || `Ürün ${index + 1}`
+      // Önce MODEL NAME kolonunu kontrol et
+      const modelNameCol = columns.find(col => {
+        const colLower = col.toLowerCase().trim()
+        return colLower === 'model name' || colLower === 'model_name' || colLower === 'model'
+      })
+      if (modelNameCol) {
+        product.name = String(row[modelNameCol] || '').trim()
+      } else {
+        product.name = String(row[columns[0]] || `Ürün ${index + 1}`).trim()
+      }
     }
     
-    // Eğer SKU yoksa, name'den oluştur
-    if (!product.sku && product.name) {
-      product.sku = product.name.toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
+    // Eğer SKU yoksa, SAP veya name'den oluştur
+    if (!product.sku) {
+      const sapCol = columns.find(col => col.toLowerCase().trim() === 'sap')
+      if (sapCol && row[sapCol]) {
+        product.sku = String(row[sapCol]).trim()
+      } else if (product.name) {
+        product.sku = product.name.toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+      }
     }
     
     return product
