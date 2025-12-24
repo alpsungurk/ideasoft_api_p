@@ -66,10 +66,10 @@ const ProductTable = forwardRef(({ products, onProductUpdate, onProductDelete, e
     setEditedProducts(prev => {
       const currentProduct = prev[index] || products[index] || {}
       const updated = {
-        ...prev,
-        [index]: {
+      ...prev,
+      [index]: {
           ...currentProduct,
-          [field]: value
+        [field]: value
         }
       }
       // Ref'i de güncelle
