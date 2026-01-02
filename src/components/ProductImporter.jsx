@@ -4,6 +4,7 @@ import { enrichProductsWithGoogle, enrichProductImagesOnly } from '../services/g
 import { bulkCreateProducts, getStoredToken, getCategories, postProductDetail, postProductImage } from '../services/ideasoftService';
 import ProductTable from './ProductTable';
 import { createBatch, updateProductStatus, updateBatchStats, updateProductCategory, getBatchDetails, updateImportedProduct } from '../services/databaseService';
+import { normalizeErrorMessage, isDuplicateError } from '../utils/errorHandler';
 import './ProductImporter.css';
 
 const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
@@ -23,7 +24,20 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
     const [backupProducts, setBackupProducts] = useState(null);
     const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
     const [confirmation, setConfirmation] = useState({ show: false, message: '', onConfirm: null, onCancel: null });
+    const [errorModal, setErrorModal] = useState({ open: false, title: '', message: '', onClose: null });
+    const [geminiApiKeyModal, setGeminiApiKeyModal] = useState({ open: false });
+    const [geminiApiKey, setGeminiApiKey] = useState('');
+    const [geminiApiKeyStatus, setGeminiApiKeyStatus] = useState(null); // 'valid', 'invalid', 'checking', null
+    const [showNewKeyInput, setShowNewKeyInput] = useState(false);
     const productTableRef = useRef(null);
+    
+    // SessionStorage'dan API key'i yükle
+    useEffect(() => {
+        const savedKey = sessionStorage.getItem('gemini_api_key');
+        if (savedKey) {
+            setGeminiApiKey(savedKey);
+        }
+    }, []);
 
     useEffect(() => {
         if (appConfig) setConfig(appConfig);
@@ -43,7 +57,24 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
     }, [step, onStepChange]);
     
     const showNotification = (message, type = 'info') => {
-        setNotification({ show: true, message, type });
+        const normalizedMsg = normalizeErrorMessage(message);
+        const msgLower = String(normalizedMsg || '').toLowerCase();
+        
+        // Duplicate hatası veya "aynı üründen var" mesajı ise alert göster
+        if (
+            isDuplicateError(message) || 
+            isDuplicateError(normalizedMsg) ||
+            msgLower.includes('aynı üründen var') ||
+            msgLower.includes('aynı sku') ||
+            msgLower.includes('aynı ürün') ||
+            msgLower.includes('duplicate') ||
+            msgLower.includes('zaten var')
+        ) {
+            alert(normalizedMsg || 'Aynı üründen var');
+            return;
+        }
+        
+        setNotification({ show: true, message: normalizedMsg, type });
         setTimeout(() => {
             setNotification({ show: false, message: '', type: 'info' });
         }, 3000);
@@ -57,7 +88,6 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             const result = await getCategories(storedToken.access_token, config.shopId);
             if (result.success) setCategories(result.data);
         } catch (error) {
-            console.error('Kategoriler yüklenirken hata:', error);
         } finally {
             setLoadingCategories(true);
             setLoadingCategories(false);
@@ -96,18 +126,112 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             setProducts(enriched);
             showNotification('Ürün resimleri Google üzerinden toplandı!', 'success');
         } catch (error) {
-            showNotification('Resim toplama hatası: ' + error.message, 'error');
+            if (error.message === 'GOOGLE_QUOTA_EXCEEDED') {
+                showNotification('Search engine hakkınız doldu! Google API limitinizi kontrol edin.', 'error');
+            } else {
+                showNotification('Resim toplama hatası: ' + error.message, 'error');
+            }
         } finally {
             setLoading(false);
             setProgress(null);
         }
     };
     
-    const handleEnrichWithGemini = async () => {
+    const handleEnrichWithGemini = () => {
         if (products.length === 0) {
             showNotification('Lütfen önce Excel dosyası yükleyin!', 'warning');
             return;
         }
+        
+        // SessionStorage'dan key'i yükle
+        const savedKey = sessionStorage.getItem('gemini_api_key');
+        if (savedKey) {
+            setGeminiApiKey(savedKey);
+        }
+        
+        // Modal aç
+        setGeminiApiKeyModal({ open: true });
+        setShowNewKeyInput(false);
+    };
+    
+    const validateGeminiApiKey = async (key) => {
+        if (!key || !key.trim()) {
+            return { valid: false, message: 'API Key boş olamaz' };
+        }
+        
+        try {
+            // Test isteği gönder
+            const response = await fetch('/api/validate-gemini-key', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ geminiApiKey: key.trim() })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                return { 
+                    valid: false, 
+                    message: errorData.message || `HTTP ${response.status}: API Key doğrulanamadı` 
+                };
+            }
+            
+            const result = await response.json();
+            return result;
+        } catch (error) {
+            return { 
+                valid: false, 
+                message: `Bağlantı hatası: ${error.message || 'API Key doğrulanamadı'}` 
+            };
+        }
+    };
+    
+    const handleGeminiApiKeyCheck = async () => {
+        const keyToCheck = geminiApiKey.trim();
+        if (!keyToCheck) {
+            showNotification('Lütfen Gemini API Key giriniz!', 'warning');
+            return;
+        }
+        
+        setGeminiApiKeyStatus('checking');
+        const validation = await validateGeminiApiKey(keyToCheck);
+        
+        if (validation.valid) {
+            setGeminiApiKeyStatus('valid');
+            // SessionStorage'a kaydet
+            sessionStorage.setItem('gemini_api_key', keyToCheck);
+            setGeminiApiKey(keyToCheck);
+            showNotification('API Key geçerli!', 'success');
+        } else {
+            setGeminiApiKeyStatus('invalid');
+            showNotification(validation.message || 'API Key geçerli değil!', 'error');
+        }
+    };
+    
+    const handleGeminiApiKeySubmit = async () => {
+        const keyToUse = geminiApiKey.trim();
+        if (!keyToUse) {
+            showNotification('Lütfen Gemini API Key giriniz!', 'warning');
+            return;
+        }
+        
+        // Key geçerli değilse kontrol et
+        if (geminiApiKeyStatus !== 'valid') {
+            setGeminiApiKeyStatus('checking');
+            const validation = await validateGeminiApiKey(keyToUse);
+            if (!validation.valid) {
+                setGeminiApiKeyStatus('invalid');
+                showNotification(validation.message || 'API Key geçerli değil!', 'error');
+                return;
+            }
+            setGeminiApiKeyStatus('valid');
+        }
+        
+        // SessionStorage'a kaydet
+        sessionStorage.setItem('gemini_api_key', keyToUse);
+        setGeminiApiKeyModal({ open: false });
+        setShowNewKeyInput(false);
         
         setLoading(true);
         setProgress({ current: 0, total: products.length, message: 'Gemini ile ürün açıklamaları oluşturuluyor...' });
@@ -128,7 +252,8 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                     body: JSON.stringify({
                         productName: product.name || product.sku || 'Ürün',
                         brand: product.brand || '',
-                        features: `Fiyat: ${product.price}, Stok: ${product.stockAmount}, Kategori: ${product.categoryId}`
+                        features: `Fiyat: ${product.price}, Stok: ${product.stockAmount}, Kategori: ${product.categoryId}`,
+                        geminiApiKey: keyToUse
                     })
                 });
                 
@@ -139,9 +264,14 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                     const updatedProduct = { ...product, description: result.description };
                     updatedProducts.push(updatedProduct);
                 } else {
-                    console.error(`Ürün ${product.name || product.sku} için açıklama oluşturulamadı:`, result.error);
                     // Keep the original product if description generation fails
                     updatedProducts.push(product);
+                    
+                    // Gemini API quota exceeded kontrolü
+                    if (result.quotaExceeded || (result.error && result.error.includes('keyi bitti'))) {
+                        showNotification('Gemini API keyi bitti! İşlem durduruldu.', 'error');
+                        break; // Döngüyü durdur
+                    }
                 }
                 
                 // Small delay to avoid overwhelming the API
@@ -197,8 +327,10 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             }
 
             setProgress({ current: 0, total: products.length, message: 'Ürünler Ideasoft\'a aktarılıyor...' });
+            const failedProducts = [];
             const importResults = await bulkCreateProducts(products, config.apiKey, config.shopId, async (prog) => {
                 setProgress(prog);
+                
                 if (prog.product && batchId) {
                     const currentProd = products[prog.current - 1];
                     if (currentProd?.sku) {
@@ -222,7 +354,6 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                                         description: description || undefined
                                     });
                                 } catch (e) {
-                                    console.error('DB updateImportedProduct failed:', e);
                                 }
                             }
 
@@ -236,7 +367,6 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                                         extraDetails: ''
                                     });
                                 } catch (e) {
-                                    console.error('postProductDetail failed:', e);
                                 }
                             }
 
@@ -250,21 +380,76 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                                         ideasoftProductId: prog?.data?.id
                                     });
                                 } catch (e) {
-                                    console.error('postProductImage failed:', e);
                                 }
                             }
                         }
                     }
                 }
+                
+                // Başarısız ürünleri topla
+                if (!prog.success && prog.error) {
+                    const currentProd = products[prog.current - 1];
+                    const productName = currentProd?.name || currentProd?.sku || `Ürün #${prog.current}`;
+                    const errorMsg = normalizeErrorMessage(prog.error);
+                    
+                    if (isDuplicateError(prog.error) || isDuplicateError(errorMsg)) {
+                        failedProducts.push({
+                            name: productName,
+                            sku: currentProd?.sku || '',
+                            error: 'Aynı üründen var'
+                        });
+                    } else {
+                        failedProducts.push({
+                            name: productName,
+                            sku: currentProd?.sku || '',
+                            error: errorMsg
+                        });
+                    }
+                }
             });
             if (batchId) await updateBatchStats(batchId);
 
-            setResults({
+            // Sonuçları hesapla
+            const resultsData = {
                 total: importResults.length,
                 success: importResults.filter(r => r.success).length,
                 failed: importResults.filter(r => !r.success).length,
                 details: importResults,
-            });
+            };
+
+            // Başarısız ürünleri modal olarak göster
+            if (failedProducts.length > 0) {
+                const duplicateProducts = failedProducts.filter(p => p.error === 'Aynı üründen var');
+                let modalMessage = `❌ ${failedProducts.length} ürün başarısız oldu!\n\n`;
+                
+                if (duplicateProducts.length > 0) {
+                    const productList = duplicateProducts.map(p => `- ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}`).join('\n');
+                    modalMessage += `Aynı üründen var:\n${productList}`;
+                }
+                
+                // Diğer hatalar varsa onları da göster
+                const otherErrors = failedProducts.filter(p => p.error !== 'Aynı üründen var');
+                if (otherErrors.length > 0) {
+                    if (duplicateProducts.length > 0) modalMessage += '\n\n';
+                    const errorList = otherErrors.map(p => `- ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}: ${p.error}`).join('\n');
+                    modalMessage += `Başarısız ürünler:\n${errorList}`;
+                }
+                
+                if (modalMessage) {
+                    setErrorModal({
+                        open: true,
+                        title: '❌ Aktarım Başarısız',
+                        message: modalMessage,
+                        onClose: () => {
+                            setErrorModal({ open: false, title: '', message: '', onClose: null });
+                            setResults(resultsData);
+                        }
+                    });
+                    return; // Modal gösterildi, results'ı modal kapandıktan sonra göster
+                }
+            }
+
+            setResults(resultsData);
         } catch (error) {
             showNotification('Aktarım sırasında bir hata oluştu: ' + error.message, 'error');
         } finally {
@@ -459,7 +644,12 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             </div>
             <div className="action-buttons" style={{ justifyContent: 'center' }}>
                 <button onClick={() => onComplete()} className="btn btn-secondary">Projeler Sayfasına Dön</button>
-                <button onClick={() => setStep(2)} className="btn btn-primary">Yeni Aktarım Başlat</button>
+                <button onClick={() => {
+                    setResults(null);
+                    setProducts([]);
+                    setStep(2);
+                    window.location.reload();
+                }} className="btn btn-primary">Yeni Aktarım Başlat</button>
             </div>
         </div>
     );
@@ -509,10 +699,163 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                     </div>
                 </div>
             )}
+            {errorModal.open && (
+                <div className="modal-overlay" onClick={() => errorModal.onClose ? errorModal.onClose() : setErrorModal({ open: false, title: '', message: '', onClose: null })}>
+                    <div className="modal-content error-modal" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            className="modal-close"
+                            onClick={() => errorModal.onClose ? errorModal.onClose() : setErrorModal({ open: false, title: '', message: '', onClose: null })}
+                            style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#dc2626' }}
+                        >
+                            ×
+                        </button>
+                        <h3 style={{ color: '#dc2626', marginBottom: '16px' }}>{errorModal.title}</h3>
+                        <div style={{ whiteSpace: 'pre-line', marginBottom: '20px', lineHeight: '1.6', color: '#991b1b' }}>{errorModal.message}</div>
+                        <div className="modal-actions">
+                            <button 
+                                onClick={() => errorModal.onClose ? errorModal.onClose() : setErrorModal({ open: false, title: '', message: '', onClose: null })} 
+                                className="btn btn-primary"
+                                style={{ backgroundColor: '#dc2626', borderColor: '#dc2626' }}
+                            >
+                                Tamam
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {geminiApiKeyModal.open && (
+                <div className="modal-overlay" onClick={() => {
+                    setGeminiApiKeyModal({ open: false });
+                    setShowNewKeyInput(false);
+                    setGeminiApiKeyStatus(null);
+                }}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            className="modal-close"
+                            onClick={() => {
+                                setGeminiApiKeyModal({ open: false });
+                                setShowNewKeyInput(false);
+                                setGeminiApiKeyStatus(null);
+                            }}
+                            style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}
+                        >
+                            ×
+                        </button>
+                        <h3>Gemini API Key</h3>
+                        <p style={{ marginBottom: '16px', fontSize: '0.9rem', color: '#666' }}>
+                            Gemini API Key'inizi giriniz. Bu key ürün açıklamalarını oluşturmak için kullanılacaktır.
+                        </p>
+                        
+                        {!showNewKeyInput && geminiApiKey && (
+                            <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f3f4f6', borderRadius: '8px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <span style={{ fontSize: '0.85rem', color: '#666' }}>Mevcut Key:</span>
+                                    <span style={{ fontSize: '0.85rem', fontFamily: 'monospace', color: '#333' }}>
+                                        {geminiApiKey.substring(0, 20)}...
+                                    </span>
+                                </div>
+                                {geminiApiKeyStatus === 'valid' && (
+                                    <div style={{ color: '#10b981', fontSize: '0.85rem', fontWeight: '600' }}>✓ Geçerli</div>
+                                )}
+                                {geminiApiKeyStatus === 'invalid' && (
+                                    <div style={{ color: '#ef4444', fontSize: '0.85rem', fontWeight: '600' }}>✗ Geçerli değil</div>
+                                )}
+                                {geminiApiKeyStatus === 'checking' && (
+                                    <div style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: '600' }}>Kontrol ediliyor...</div>
+                                )}
+                                {geminiApiKeyStatus === null && (
+                                    <button 
+                                        onClick={handleGeminiApiKeyCheck}
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '0.8rem', padding: '6px 12px', marginTop: '8px' }}
+                                    >
+                                        Key'i Kontrol Et
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        
+                        {showNewKeyInput && (
+                            <input
+                                type="password"
+                                className="modal-input"
+                                placeholder="Yeni Gemini API Key yapıştırın..."
+                                value={geminiApiKey}
+                                onChange={(e) => {
+                                    setGeminiApiKey(e.target.value);
+                                    setGeminiApiKeyStatus(null);
+                                }}
+                                autoFocus
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleGeminiApiKeyCheck();
+                                    }
+                                }}
+                            />
+                        )}
+                        
+                        {!showNewKeyInput && (
+                            <button 
+                                onClick={() => {
+                                    setShowNewKeyInput(true);
+                                    setGeminiApiKey('');
+                                    setGeminiApiKeyStatus(null);
+                                }}
+                                className="btn btn-secondary"
+                                style={{ width: '100%', marginBottom: '16px' }}
+                            >
+                                Yeni Key Gir
+                            </button>
+                        )}
+                        
+                        {showNewKeyInput && (
+                            <div style={{ marginBottom: '16px' }}>
+                                {geminiApiKeyStatus === 'valid' && (
+                                    <div style={{ color: '#10b981', fontSize: '0.85rem', fontWeight: '600', marginBottom: '8px' }}>✓ Geçerli</div>
+                                )}
+                                {geminiApiKeyStatus === 'invalid' && (
+                                    <div style={{ color: '#ef4444', fontSize: '0.85rem', fontWeight: '600', marginBottom: '8px' }}>✗ Geçerli değil</div>
+                                )}
+                                {geminiApiKeyStatus === 'checking' && (
+                                    <div style={{ color: '#f59e0b', fontSize: '0.85rem', fontWeight: '600', marginBottom: '8px' }}>Kontrol ediliyor...</div>
+                                )}
+                                <button 
+                                    onClick={handleGeminiApiKeyCheck}
+                                    className="btn btn-secondary"
+                                    disabled={!geminiApiKey.trim() || geminiApiKeyStatus === 'checking'}
+                                    style={{ width: '100%', marginBottom: '8px' }}
+                                >
+                                    {geminiApiKeyStatus === 'checking' ? 'Kontrol Ediliyor...' : "Key'i Kontrol Et"}
+                                </button>
+                            </div>
+                        )}
+                        
+                        <div className="modal-actions">
+                            <button 
+                                onClick={() => {
+                                    setGeminiApiKeyModal({ open: false });
+                                    setShowNewKeyInput(false);
+                                    setGeminiApiKeyStatus(null);
+                                }} 
+                                className="btn btn-secondary"
+                            >
+                                İptal
+                            </button>
+                            <button 
+                                onClick={handleGeminiApiKeySubmit} 
+                                className="btn btn-primary"
+                                disabled={!geminiApiKey.trim() || geminiApiKeyStatus === 'checking' || (geminiApiKeyStatus !== 'valid' && showNewKeyInput)}
+                            >
+                                Devam Et
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
-            {step === 2 && !results && renderUploadStep()}
-            {step === 3 && !results && renderImportStep()}
-            {results && renderResultsStep()}
+            {step === 2 && !results && !errorModal.open && renderUploadStep()}
+            {step === 3 && !results && !errorModal.open && renderImportStep()}
+            {results && !errorModal.open && renderResultsStep()}
         </div>
     );
 };

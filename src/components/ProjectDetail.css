@@ -347,6 +347,14 @@
   accent-color: var(--primary);
 }
 
+.row-checkbox-select,
+.select-all-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
 /* Notification styles */
 .notification {
   position: fixed;
@@ -432,6 +440,24 @@
   position: relative;
 }
 
+.confirm-modal.error-modal {
+  border: 2px solid #dc2626;
+  background: #fef2f2;
+}
+
+.confirm-modal.error-modal .confirm-title {
+  color: #dc2626;
+}
+
+.confirm-modal.error-modal .confirm-message {
+  color: #991b1b;
+}
+
+.confirm-modal.error-modal .confirm-close {
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
 .confirm-close {
   position: absolute;
   top: 12px;
@@ -496,4 +522,26 @@
   color: #ef4444 !important;
   background-color: #fee2e2 !important;
   border-left: 4px solid #ef4444 !important;
+}
+
+/* Status column */
+.cell-status {
+  width: 50px;
+  text-align: center;
+}
+
+.detail-table th:first-child {
+  text-transform: none !important;
+}
+
+.status-icon-failed {
+  font-size: 18px;
+  display: inline-block;
+  cursor: help;
+}
+
+.status-icon-success {
+  font-size: 18px;
+  display: inline-block;
+  cursor: help;
 }

@@ -446,11 +446,25 @@ app.post('/api/product-images', async (req, res) => {
           console.error('⚠️ ProductImage duplicate sonrası update denenemedi:', e?.message || e)
         }
 
-        console.log('ℹ️ ProductImage zaten mevcut (duplicate), id bulunamadı (update yapılamadı):', { productId: resolvedIdeasoftProductId, filename: resolvedFilename })
-        return res.status(200).json({
-          success: true,
-          data: { id: resolvedIdeasoftProductId, filename: resolvedFilename },
-          message: 'ProductImage zaten mevcut (update yapılamadı)',
+        // Duplicate error'ı hata olarak döndür ama mesajı değiştir
+        // SKU bilgisini almak için veritabanından çek
+        let productSku = '';
+        try {
+          if (localProductId) {
+            const [rows] = await pool.query('SELECT sku FROM imported_products WHERE id = ? LIMIT 1', [localProductId])
+            if (rows && rows.length > 0) {
+              productSku = rows[0].sku || '';
+            }
+          }
+        } catch (e) {
+          console.error('SKU bilgisi alınamadı:', e)
+        }
+
+        console.log('❌ ProductImage duplicate hatası:', { productId: resolvedIdeasoftProductId, filename: resolvedFilename, sku: productSku })
+        return res.status(400).json({
+          success: false,
+          error: 'Aynı üründen var',
+          statusCode: 400,
           duplicate: true
         })
       }
@@ -534,8 +548,21 @@ app.post('/api/google/image-search', async (req, res) => {
     return res.json({ success: true, url })
   } catch (error) {
     const status = error?.response?.status
-    const message = error?.response?.data?.error?.message || error?.message || 'Google image search hatası'
-    return res.status(status || 500).json({ success: false, error: message })
+    const errorData = error?.response?.data?.error || {}
+    const errorMessage = errorData?.message || error?.message || 'Google image search hatası'
+    
+    // Quota exceeded kontrolü
+    if (status === 429 || errorMessage.toLowerCase().includes('quota') || 
+        errorMessage.toLowerCase().includes('limit exceeded') ||
+        errorMessage.toLowerCase().includes('daily limit')) {
+      return res.status(429).json({ 
+        success: false, 
+        error: 'Search engine hakkınız doldu. Lütfen Google API limitinizi kontrol edin veya daha sonra tekrar deneyin.',
+        quotaExceeded: true
+      })
+    }
+    
+    return res.status(status || 500).json({ success: false, error: errorMessage })
   }
 })
 
@@ -569,8 +596,21 @@ app.post('/api/google/web-search', async (req, res) => {
     return res.json({ success: true, items })
   } catch (error) {
     const status = error?.response?.status
-    const message = error?.response?.data?.error?.message || error?.message || 'Google web search hatası'
-    return res.status(status || 500).json({ success: false, error: message })
+    const errorData = error?.response?.data?.error || {}
+    const errorMessage = errorData?.message || error?.message || 'Google web search hatası'
+    
+    // Quota exceeded kontrolü
+    if (status === 429 || errorMessage.toLowerCase().includes('quota') || 
+        errorMessage.toLowerCase().includes('limit exceeded') ||
+        errorMessage.toLowerCase().includes('daily limit')) {
+      return res.status(429).json({ 
+        success: false, 
+        error: 'Search engine hakkınız doldu. Lütfen Google API limitinizi kontrol edin veya daha sonra tekrar deneyin.',
+        quotaExceeded: true
+      })
+    }
+    
+    return res.status(status || 500).json({ success: false, error: errorMessage })
   }
 })
 
@@ -883,13 +923,13 @@ app.post('/api/generate-product-description', async (req, res) => {
       })
     }
     
-    // Get Gemini API key from environment
-    const geminiApiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY
+    // Get Gemini API key from request body only
+    const geminiApiKey = req.body?.geminiApiKey
     
-    if (!geminiApiKey) {
+    if (!geminiApiKey || !geminiApiKey.trim()) {
       return res.status(400).json({ 
         success: false, 
-        error: 'GEMINI_API_KEY eksik' 
+        error: 'Gemini API Key gerekli' 
       })
     }
     
@@ -982,9 +1022,14 @@ Lütfen ürünle ilgili tüm teknik özellikleri ve bilgileri tabloya uygun şek
           error: 'API anahtarı geçersiz veya erişim reddedildi: ' + (data?.error?.message || 'Yetkilendirme hatası') 
         });
       } else if (status === 429) {
+        const errorMsg = data?.error?.message || '';
+        const isQuotaExceeded = errorMsg.toLowerCase().includes('quota') || 
+                                errorMsg.toLowerCase().includes('limit') ||
+                                errorMsg.toLowerCase().includes('exceeded');
         return res.status(429).json({ 
           success: false, 
-          error: 'API kullanım limitine ulaşıldı, lütfen daha sonra tekrar deneyin' 
+          error: isQuotaExceeded ? 'Gemini API keyi bitti. Lütfen yeni bir API key alın veya limitinizi kontrol edin.' : 'API kullanım limitine ulaşıldı, lütfen daha sonra tekrar deneyin',
+          quotaExceeded: true
         });
       } else {
         return res.status(status || 500).json({ 
@@ -1006,6 +1051,118 @@ Lütfen ürünle ilgili tüm teknik özellikleri ve bilgileri tabloya uygun şek
         error: error.message || 'Ürün açıklaması oluşturulurken bir hata oluştu' 
       });
     }
+  }
+})
+
+// Validate Gemini API Key
+app.post('/api/validate-gemini-key', async (req, res) => {
+  try {
+    const { geminiApiKey } = req.body || {}
+    
+    if (!geminiApiKey || !geminiApiKey.trim()) {
+      return res.status(400).json({ 
+        valid: false,
+        message: 'API Key gerekli' 
+      })
+    }
+    
+    const trimmedKey = geminiApiKey.trim()
+    
+    // Test isteği gönder - basit bir prompt ile
+    const testPrompt = 'Hello'
+    const apiVersion = process.env.VITE_GEMINI_API_VERSION || 'v1'
+    const model = process.env.VITE_GEMINI_MODEL || 'gemini-pro'
+    const geminiUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${trimmedKey}`
+    
+    try {
+      const testResponse = await axios.post(geminiUrl, {
+        contents: [{
+          parts: [{
+            text: testPrompt
+          }]
+        }]
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000 // 15 second timeout for validation
+      })
+      
+      // Response yapısını kontrol et
+      const hasValidResponse = testResponse.data && 
+                                testResponse.data.candidates && 
+                                Array.isArray(testResponse.data.candidates) && 
+                                testResponse.data.candidates.length > 0 &&
+                                testResponse.data.candidates[0].content &&
+                                testResponse.data.candidates[0].content.parts
+      
+      if (hasValidResponse) {
+        return res.json({ 
+          valid: true,
+          message: 'API Key geçerli' 
+        })
+      } else {
+        return res.json({ 
+          valid: false,
+          message: 'API Key geçerli değil - Geçersiz yanıt formatı' 
+        })
+      }
+    } catch (apiError) {
+      // API hatası kontrolü
+      if (apiError.response) {
+        const status = apiError.response.status
+        const data = apiError.response.data
+        const errorMessage = data?.error?.message || data?.error || 'Bilinmeyen hata'
+        
+        if (status === 400) {
+          return res.json({ 
+            valid: false,
+            message: `API Key geçersiz: ${errorMessage}` 
+          })
+        } else if (status === 403) {
+          return res.json({ 
+            valid: false,
+            message: `API Key yetkisiz veya erişim reddedildi: ${errorMessage}` 
+          })
+        } else if (status === 404) {
+          return res.json({ 
+            valid: false,
+            message: `Model bulunamadı. Lütfen model adını kontrol edin: ${model}` 
+          })
+        } else if (status === 429) {
+          const errorMsg = data?.error?.message || '';
+          const isQuotaExceeded = errorMsg.toLowerCase().includes('quota') || 
+                                  errorMsg.toLowerCase().includes('limit') ||
+                                  errorMsg.toLowerCase().includes('exceeded');
+          return res.json({ 
+            valid: false,
+            message: isQuotaExceeded ? 'Gemini API keyi bitti. Lütfen yeni bir API key alın veya limitinizi kontrol edin.' : 'API kullanım limitine ulaşıldı, lütfen daha sonra tekrar deneyin'
+          })
+        } else {
+          return res.json({ 
+            valid: false,
+            message: `API Key doğrulanamadı (${status}): ${errorMessage}` 
+          })
+        }
+      } else if (apiError.request) {
+        // İstek gönderildi ama yanıt alınamadı
+        return res.json({ 
+          valid: false,
+          message: 'Gemini API\'ye bağlanılamadı. İnternet bağlantınızı kontrol edin.' 
+        })
+      } else {
+        // Diğer hatalar
+        return res.json({ 
+          valid: false,
+          message: `API Key doğrulanamadı: ${apiError.message || 'Bilinmeyen hata'}` 
+        })
+      }
+    }
+  } catch (error) {
+    return res.status(500).json({ 
+      valid: false,
+      message: `Doğrulama hatası: ${error.message || 'Bilinmeyen hata'}` 
+    })
   }
 })
 
@@ -1331,11 +1488,12 @@ app.post('/api/product-details', async (req, res) => {
           console.error('⚠️ ProductDetail duplicate sonrası update denenemedi:', e?.message || e)
         }
 
-        console.log('ℹ️ ProductDetail zaten mevcut (duplicate), id bulunamadı (update yapılamadı):', { productId: ideasoftProductId, sku })
-        return res.status(200).json({
-          success: true,
-          data: { id: ideasoftProductId, sku },
-          message: 'ProductDetail zaten mevcut (update yapılamadı)',
+        // Duplicate error'ı hata olarak döndür ama mesajı değiştir
+        console.log('❌ ProductDetail duplicate hatası:', { productId: ideasoftProductId, sku })
+        return res.status(400).json({
+          success: false,
+          error: 'Aynı üründen var',
+          statusCode: 400,
           duplicate: true
         })
       }
@@ -1611,7 +1769,11 @@ const dbConfig = {
   connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 0,
+  connectTimeout: 60000, // 60 saniye
+  acquireTimeout: 60000, // 60 saniye
+  timeout: 60000, // 60 saniye
+  reconnect: true
 }
 
 let pool = null;
@@ -1774,29 +1936,71 @@ app.post('/api/db/create-batch', async (req, res) => {
 
 // Get all batches
 app.get('/api/db/batches', async (req, res) => {
+  let connection = null;
   try {
     if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
 
-    const [rows] = await pool.query('SELECT * FROM import_batches ORDER BY created_at DESC')
+    // Connection pool'dan bağlantı al
+    connection = await pool.getConnection();
+    
+    const [rows] = await connection.query({
+      sql: 'SELECT * FROM import_batches ORDER BY created_at DESC',
+      timeout: 30000 // 30 saniye timeout
+    })
+    
     return res.json({ success: true, data: rows })
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message })
+    console.error('Get Batches Error:', error)
+    
+    // ECONNRESET ve connection hatalarını yakala
+    if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Veritabanı bağlantısı kesildi. Lütfen sayfayı yenileyin ve tekrar deneyin.' 
+      })
+    }
+    
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Veritabanı hatası oluştu' 
+    })
+  } finally {
+    // Bağlantıyı her zaman release et
+    if (connection) {
+      connection.release();
+    }
   }
 })
 
 // Get batch details with products
 app.get('/api/db/batches/:id', async (req, res) => {
+  let connection = null;
   try {
     if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
 
-    const batchId = req.params.id
+    const batchId = parseInt(req.params.id, 10)
+    if (isNaN(batchId)) {
+      return res.status(400).json({ success: false, error: 'Invalid batch ID' })
+    }
 
+    // Connection pool'dan bağlantı al
+    connection = await pool.getConnection();
+    
     // Batch info
-    const [batchRows] = await pool.query('SELECT * FROM import_batches WHERE id = ?', [batchId])
-    if (batchRows.length === 0) return res.status(404).json({ success: false, error: 'Proje bulunamadı' })
+    const [batchRows] = await connection.query({
+      sql: 'SELECT * FROM import_batches WHERE id = ?',
+      timeout: 30000 // 30 saniye timeout
+    }, [batchId])
+    
+    if (batchRows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Proje bulunamadı' })
+    }
 
     // Products
-    const [productRows] = await pool.query('SELECT * FROM imported_products WHERE batch_id = ?', [batchId])
+    const [productRows] = await connection.query({
+      sql: 'SELECT * FROM imported_products WHERE batch_id = ?',
+      timeout: 30000 // 30 saniye timeout
+    }, [batchId])
 
     return res.json({
       success: true,
@@ -1806,7 +2010,25 @@ app.get('/api/db/batches/:id', async (req, res) => {
       }
     })
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message })
+    console.error('Get Batch Details Error:', error)
+    
+    // ECONNRESET ve connection hatalarını yakala
+    if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Veritabanı bağlantısı kesildi. Lütfen sayfayı yenileyin ve tekrar deneyin.' 
+      })
+    }
+    
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Veritabanı hatası oluştu' 
+    })
+  } finally {
+    // Bağlantıyı her zaman release et
+    if (connection) {
+      connection.release();
+    }
   }
 })
 

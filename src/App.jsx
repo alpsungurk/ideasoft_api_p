@@ -100,9 +100,12 @@ function App() {
         {!hideHeader && (
           <header className="header card">
             <div className="header-top">
-              <div>
-                <h1>🚀 Ideasoft Ürün Aktarıcı</h1>
-                <p>Excel dosyanızdan ürünleri Ideasoft mağazanıza aktarın</p>
+              <div className="header-brand">
+                <img src="/logo.png" alt="IdeaExcel" className="header-logo" />
+                <div>
+                  <h1>IdeaExcel</h1>
+                  <p>Excel dosyanızdan ürünleri Ideasoft mağazanıza aktarın</p>
+                </div>
               </div>
               {isAuthenticated && (
                 <button onClick={handleLogout} className="btn btn-secondary">

@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { normalizeErrorMessage } from '../utils/errorHandler'
 
 // Ideasoft API base URL - OAuth2 token ile kullanılır
 const IDEASOFT_API_BASE = 'https://api.ideasoft.com.tr/api/v1'
@@ -41,14 +42,13 @@ export const createProductCategory = async (productId, categoryId, accessToken, 
       throw new Error(response.data?.error || 'Kategori ilişkisi oluşturulamadı')
     }
   } catch (error) {
-    console.error('Product Category API Error:', error)
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'Kategori ilişkisi oluşturulamadı'
     return {
       success: false,
-      error: errorMessage,
+      error: normalizeErrorMessage(errorMessage),
       statusCode: error.response?.status
     }
   }
@@ -81,13 +81,13 @@ export const postProductImage = async ({ shopId, accessToken, localProductId, im
       }
     }
 
-    return { success: false, error: response.data?.error || 'ProductImages gönderilemedi' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'ProductImages gönderilemedi') }
   } catch (error) {
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'ProductImages gönderilemedi'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -108,13 +108,13 @@ export const findIdeasoftProductBySku = async ({ shopId, accessToken, sku }) => 
       return { success: true, data: response.data.data }
     }
 
-    return { success: false, error: response.data?.error || 'Ürün bulunamadı' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün bulunamadı') }
   } catch (error) {
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'Ürün bulunamadı'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -182,7 +182,6 @@ export const createIdeasoftProduct = async (product, accessToken, shopId) => {
       )
 
       if (!categoryResult.success) {
-        console.warn(`Ürün oluşturuldu ancak kategori ilişkisi eklenemedi: ${categoryResult.error}`)
         // Ürün oluşturuldu ama kategori eklenemedi - yine de başarılı sayılabilir
         return {
           success: true,
@@ -200,7 +199,6 @@ export const createIdeasoftProduct = async (product, accessToken, shopId) => {
 
     return { success: true, data: createdProduct }
   } catch (error) {
-    console.error('Ideasoft API Error:', error)
     const errorMessage = error.response?.data?.message ||
       error.response?.data?.error ||
       error.response?.data?.error_description ||
@@ -208,7 +206,7 @@ export const createIdeasoftProduct = async (product, accessToken, shopId) => {
       'Bilinmeyen bir hata oluştu'
     return {
       success: false,
-      error: errorMessage,
+      error: normalizeErrorMessage(errorMessage),
       statusCode: error.response?.status
     }
   }
@@ -255,12 +253,10 @@ export const postProductDetail = async ({ shopId, accessToken, localProductId, d
   try {
     // Parametre validasyonu
     if (!localProductId) {
-      console.error('postProductDetail: localProductId eksik', { shopId, localProductId, details: details?.substring(0, 50) })
-      return { success: false, error: 'localProductId gerekli' }
+      return { success: false, error: normalizeErrorMessage('localProductId gerekli') }
     }
     if (!shopId || !accessToken) {
-      console.error('postProductDetail: shopId veya accessToken eksik', { shopId: !!shopId, accessToken: !!accessToken })
-      return { success: false, error: 'shopId ve accessToken gerekli' }
+      return { success: false, error: normalizeErrorMessage('shopId ve accessToken gerekli') }
     }
 
     const response = await axios.post(
@@ -288,19 +284,13 @@ export const postProductDetail = async ({ shopId, accessToken, localProductId, d
       }
     }
 
-    return { success: false, error: response.data?.error || 'ProductDetail gönderilemedi' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'ProductDetail gönderilemedi') }
   } catch (error) {
-    console.error('postProductDetail error:', {
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message,
-      localProductId
-    })
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'ProductDetail gönderilemedi'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -321,10 +311,10 @@ export const getIdeasoftProductsBatch = async ({ shopId, accessToken, productIds
       return { success: true, data: response.data.data }
     }
 
-    return { success: false, error: response.data?.error || 'Toplu ürün çekilemedi' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Toplu ürün çekilemedi') }
   } catch (error) {
     const errorMessage = error.response?.data?.error || error.response?.data?.message || error.message || 'Toplu ürün çekilemedi'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -361,13 +351,13 @@ export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, pr
       return { success: true, data: updated }
     }
 
-    return { success: false, error: response.data?.error || 'Ürün güncellenemedi' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün güncellenemedi') }
   } catch (error) {
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'Ürün güncellenemedi'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -389,13 +379,13 @@ export const getIdeasoftProduct = async ({ shopId, accessToken, productId }) => 
       return { success: true, data: response.data.data }
     }
 
-    return { success: false, error: response.data?.error || 'Ürün alınamadı' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün alınamadı') }
   } catch (error) {
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'Ürün alınamadı'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -507,16 +497,6 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
         shopId: shopId
       }
       localStorage.setItem('ideasoft_token', JSON.stringify(tokenData))
-
-      // Token'ı console'da göster
-      console.log('🔑 Token Başarıyla Alındı:', {
-        access_token: tokenData.access_token,
-        refresh_token: tokenData.refresh_token,
-        expires_in: tokenData.expires_in,
-        token_type: tokenData.token_type,
-        expires_at: new Date(tokenData.expires_at).toLocaleString('tr-TR'),
-        shopId: tokenData.shopId
-      })
 
       return tokenData
     } else {
@@ -630,27 +610,6 @@ export const getCategories = async (accessToken, shopId) => {
     if (response.data && response.data.success) {
       const categoriesList = response.data.data || []
 
-      // Önce ID'leri console'da göster
-      const categoryIds = categoriesList.map(cat => cat.id).filter(id => id !== undefined)
-      console.log('📋 Kategori ID\'leri:', categoryIds)
-      console.log('📋 Toplam Kategori Sayısı:', response.data.total || categoriesList.length)
-      console.log('📋 Aktif Kategori Sayısı:', response.data.active || categoriesList.length)
-
-      // Her kategori için detaylı bilgi console'da göster
-      console.log('📋 Aktif Kategoriler (Status: 1):')
-      categoriesList.forEach(cat => {
-        const categoryInfo = {
-          id: cat.id,
-          name: cat.name,
-          slug: cat.slug,
-          status: cat.status,
-          parentId: cat.parentId || cat.parent?.id || null,
-          parentName: cat.parentName || cat.parent?.name || null,
-          hasChildren: cat.hasChildren,
-          sortOrder: cat.sortOrder
-        }
-        console.log(`  - ID: ${categoryInfo.id}, Name: ${categoryInfo.name}, Parent: ${categoryInfo.parentName || 'Yok'}`)
-      })
 
       return {
         success: true,
@@ -662,7 +621,6 @@ export const getCategories = async (accessToken, shopId) => {
       throw new Error(response.data?.error || 'Kategoriler alınamadı')
     }
   } catch (error) {
-    console.error('Categories API Error:', error)
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
@@ -705,13 +663,13 @@ export const recreateDeletedProduct = async (product, accessToken, shopId) => {
       return { success: true, data: response.data.data }
     }
 
-    return { success: false, error: response.data?.error || 'Silinmiş ürün yeniden oluşturulamadı' }
+    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Silinmiş ürün yeniden oluşturulamadı') }
   } catch (error) {
     const errorMessage = error.response?.data?.error ||
       error.response?.data?.message ||
       error.message ||
       'Silinmiş ürün yeniden oluşturulamadı'
-    return { success: false, error: errorMessage, statusCode: error.response?.status }
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
   }
 }
 
@@ -734,16 +692,6 @@ export const getCategory = async (accessToken, shopId, categoryId) => {
 
     if (response.data && response.data.success) {
       const category = response.data.data
-      console.log('📋 Kategori Detayı:', {
-        id: category.id,
-        name: category.name,
-        slug: category.slug,
-        status: category.status,
-        parentId: category.parent?.id || category.parentId || null,
-        parentName: category.parent?.name || category.parentName || null,
-        hasChildren: category.hasChildren
-      })
-
       return { success: true, data: category }
     } else {
       throw new Error(response.data?.error || 'Kategori alınamadı')

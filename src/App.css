@@ -45,16 +45,33 @@
   justify-content: space-between;
 }
 
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-logo {
+  height: 90px;
+  width: auto;
+  object-fit: contain;
+}
+
 .header h1 {
   font-size: 1.75rem;
   display: flex;
   align-items: center;
   gap: 12px;
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .header p {
   margin-top: 4px;
   font-size: 1rem;
+  margin: 0;
+  color: var(--text-light);
 }
 
 /* Tabs */

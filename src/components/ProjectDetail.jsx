@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getBatchDetails, updateImportedProduct, updateProductStatus, updateBatchStats } from '../services/databaseService';
-import { getIdeasoftProductsBatch, updateIdeasoftProduct, getCategories, getStoredToken, recreateDeletedProduct, postProductDetail, postProductImage } from '../services/ideasoftService';
+import { getIdeasoftProductsBatch, updateIdeasoftProduct, getCategories, getStoredToken, recreateDeletedProduct, postProductDetail, postProductImage, getIdeasoftProduct } from '../services/ideasoftService';
+import { normalizeErrorMessage, isDuplicateError } from '../utils/errorHandler';
 import './ProjectDetail.css';
 
 const normalizeTextForCompare = (value) => {
@@ -29,6 +30,7 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkPosting, setBulkPosting] = useState(false);
   const [bulkPulling, setBulkPulling] = useState(false);
+  const [selectedProducts, setSelectedProducts] = useState(new Set());
   const [categories, setCategories] = useState([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [confirmState, setConfirmState] = useState({ open: false, title: '', message: '', onConfirm: null });
@@ -37,7 +39,24 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   
   const showNotification = (message, type = 'info') => {
-    setNotification({ show: true, message, type });
+    const normalizedMsg = normalizeErrorMessage(message);
+    const msgLower = String(normalizedMsg || '').toLowerCase();
+    
+    // Duplicate hatası veya "aynı üründen var" mesajı ise alert göster
+    if (
+      isDuplicateError(message) || 
+      isDuplicateError(normalizedMsg) ||
+      msgLower.includes('aynı üründen var') ||
+      msgLower.includes('aynı sku') ||
+      msgLower.includes('aynı ürün') ||
+      msgLower.includes('duplicate') ||
+      msgLower.includes('zaten var')
+    ) {
+      alert(normalizedMsg || 'Aynı üründen var');
+      return;
+    }
+    
+    setNotification({ show: true, message: normalizedMsg, type });
     setTimeout(() => {
       setNotification({ show: false, message: '', type: 'info' });
     }, 3000);
@@ -75,6 +94,7 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         _remoteStatus: p.ideasoft_product_id ? 'unknown' : 'na'
       }));
       setProducts(initialProducts);
+      setSelectedProducts(new Set()); // Seçimleri temizle
 
       const accessToken = appConfig?.apiKey;
       const shopId = appConfig?.shopId;
@@ -116,7 +136,6 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         setCategories(result.data);
       }
     } catch (error) {
-      console.error('Kategoriler yüklenirken hata:', error);
     } finally {
       setLoadingCategories(false);
     }
@@ -176,45 +195,88 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handlePullRow = async (row) => {
-    if (!row._remote) {
-      showNotification('Ideasoft verisi bulunamadı.', 'error');
+    if (!row.ideasoft_product_id) {
+      showNotification('Ideasoft ürün ID\'si bulunamadı.', 'error');
       return;
     }
 
     setPullingId(row.id);
     try {
-      const r = row._remote;
+      const accessToken = appConfig?.apiKey;
+      const shopId = appConfig?.shopId;
 
-      const remoteDescription = String(r.details ?? '').trim();
-      const remoteImageCandidate =
-        (r.images && (r.images[0]?.originalUrl || r.images[0]?.thumbUrl || r.images[0]?.filename)) || '';
-      const remoteImage = String(remoteImageCandidate || '').trim();
+      if (!accessToken || !shopId) {
+        showNotification('Shop ID veya Access Token eksik!', 'error');
+        return;
+      }
 
-      const shouldOverwriteDescription = remoteDescription.length > 0;
-      const shouldOverwriteImage = remoteImage.length > 0 && /^(https?:\/\/)/i.test(remoteImage);
+      // Ideasoft API'den tam ürün bilgisini çek
+      const productResult = await getIdeasoftProduct({
+        shopId,
+        accessToken,
+        productId: row.ideasoft_product_id
+      });
 
+      if (!productResult?.success || !productResult?.data) {
+        throw new Error(productResult?.error || 'Ürün bilgisi alınamadı');
+      }
+
+      const productData = productResult.data;
+      
+      // Ürün detaylarını çek (details, extraDetails)
+      let details = '';
+      let extraDetails = '';
+      if (productData.detail) {
+        details = String(productData.detail.details || '').trim();
+        extraDetails = String(productData.detail.extraDetails || '').trim();
+      }
+
+      // Resimleri çek (ilk resim)
+      let imageUrl = '';
+      if (productData.images && Array.isArray(productData.images) && productData.images.length > 0) {
+        const firstImage = productData.images[0];
+        imageUrl = String(firstImage.originalUrl || firstImage.thumbUrl || firstImage.filename || '').trim();
+      }
+
+      // Kategori bilgisini çek (ilk kategori)
+      let categoryId = null;
+      if (productData.categories && Array.isArray(productData.categories) && productData.categories.length > 0) {
+        categoryId = Number(productData.categories[0].id) || null;
+      }
+
+      // Fiyat bilgisini çek
+      const price = Number(productData.price1 || productData.price || 0);
+
+      // Stok bilgisini çek
+      const stockAmount = Number(productData.stockAmount || productData.stock || 0);
+
+      // Status bilgisini çek
+      const status = Number(productData.status) === 1 ? 1 : 0;
+
+      // Tüm verileri payload'a ekle
       const payload = {
-        name: r.name ?? '',
-        sku: r.sku ?? '',
-        price: Number(r.price1) || 0,
-        stockAmount: Number(r.stockAmount) || 0,
-        description: shouldOverwriteDescription ? remoteDescription : (row.description ?? ''),
-        imageUrl: shouldOverwriteImage ? remoteImage : (row.image_url ?? ''),
-        status: Number(r.status) ? 1 : 0,
-        categoryId: r.categoryId ?? row.categoryId ?? null
+        name: String(productData.name || '').trim(),
+        sku: String(productData.sku || '').trim(),
+        price: price,
+        stockAmount: stockAmount,
+        description: details || extraDetails || '',
+        imageUrl: imageUrl,
+        status: status,
+        categoryId: categoryId
       };
+
       const result = await updateImportedProduct(row.id, payload);
       if (!result?.success) throw new Error(result?.error || 'Veri çekilemedi');
 
       setProducts(prev => prev.map(p =>
         p.id === row.id
           ? {
-            ...p,
-            ...payload,
-            stock_amount: payload.stockAmount,
-            image_url: payload.imageUrl,
-            _dirty: false
-          }
+              ...p,
+              ...payload,
+              stock_amount: payload.stockAmount,
+              image_url: payload.imageUrl,
+              _dirty: false
+            }
           : p
       ));
       
@@ -227,9 +289,16 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handleBulkSave = async () => {
-    const dirtyProducts = products.filter(p => p._dirty);
+    // Sadece seçili ürünleri al
+    const selectedIds = Array.from(selectedProducts);
+    if (selectedIds.length === 0) {
+      showNotification('Lütfen kaydetmek istediğiniz ürünleri seçin.', 'warning');
+      return;
+    }
+    
+    const dirtyProducts = products.filter(p => selectedIds.includes(p.id) && p._dirty);
     if (dirtyProducts.length === 0) {
-      showNotification('Kaydedilecek değişiklik yok.', 'warning');
+      showNotification('Seçili ürünlerde kaydedilecek değişiklik yok.', 'warning');
       return;
     }
   
@@ -250,7 +319,6 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         await updateImportedProduct(p.id, payload);
         successCount++; 
       } catch (e) {
-        console.error(`Ürün ${p.id} kaydedilemedi:`, e);
       }
     }
   
@@ -261,16 +329,31 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handleBulkUpdateIdeasoft = async () => {
-    const targetProducts = products.filter(p => p.ideasoft_product_id);
+    // Sadece seçili ürünleri al
+    const selectedIds = Array.from(selectedProducts);
+    if (selectedIds.length === 0) {
+      showNotification('Lütfen göndermek istediğiniz ürünleri seçin.', 'warning');
+      return;
+    }
+    
+    // Seçili ürünleri al - ideasoft_product_id olanlar veya başarısız durumdaki ürünler
+    const targetProducts = products.filter(p => {
+      if (!selectedIds.includes(p.id)) return false;
+      const isFailed = String(p.transfer_status || '').toUpperCase() === 'FAILED';
+      // ideasoft_product_id olanlar veya başarısız durumdaki ürünler (ideasoft_product_id olsa da olmasa da)
+      return p.ideasoft_product_id || isFailed;
+    });
+    const selectedCount = selectedIds.length;
+    
     if (targetProducts.length === 0) {
-      showNotification('Ideasoft\'a gönderilecek ürün bulunamadı.', 'warning');
+      showNotification('Seçili ürünlerde Ideasoft\'a gönderilecek ürün bulunamadı.', 'warning');
       return;
     }
 
     setConfirmState({
       open: true,
       title: 'Onay',
-      message: `${targetProducts.length} ürünü Ideasoft'a göndermek istediğinize emin misiniz?`,
+      message: `${selectedCount} ürün seçildi. ${targetProducts.length} ürünü Ideasoft'a göndermek istediğinize emin misiniz?`,
       onConfirm: async () => {
         setConfirmState({ open: false, title: '', message: '', onConfirm: null });
         setBulkPosting(true);
@@ -279,8 +362,13 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         let deletedCount = 0;
         let recreatedCount = 0;
 
-        for (const p of targetProducts) {
+        // Her ürün için işlemi paralel olarak çalıştır
+        const processProduct = async (p) => {
+          const result = { success: false, recreated: false, deleted: false, error: null };
           try {
+            // Başarısız durumdaki ürünler için de göndermeye çalış
+            const isFailed = String(p.transfer_status || '').toUpperCase() === 'FAILED';
+            
             const productData = {
               name: p.name || '',
               fullName: p.name || '',
@@ -290,12 +378,191 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
               status: Number(p.status) ? 1 : 0,
               details: p.description || '',
             };
-            const result = await updateIdeasoftProduct({
-              shopId,
-              accessToken: apiKey,
-              productId: p.ideasoft_product_id,
-              productData
-            });
+            
+            // Başarısız durumdaki ürünler için de göndermeye çalış
+            let result = null;
+            
+            // Eğer ideasoft_product_id yoksa, önce oluştur
+            if (!p.ideasoft_product_id) {
+              const createRes = await recreateDeletedProduct(productData, apiKey, shopId);
+              if (createRes?.success && createRes?.data?.id) {
+                const newIdeasoftId = createRes.data.id;
+                await updateImportedProduct(p.id, {
+                  ...productData,
+                  ideasoft_product_id: newIdeasoftId
+                });
+                p.ideasoft_product_id = newIdeasoftId;
+                
+                // Detail ve image gönder
+                if (String(p.description || '').trim()) {
+                  try {
+                    await postProductDetail({
+                      shopId,
+                      accessToken: apiKey,
+                      localProductId: p.id,
+                      details: p.description || '',
+                      extraDetails: ''
+                    });
+                  } catch (e) {
+                  }
+                }
+                
+                if (String(p.image_url || '').trim()) {
+                  try {
+                    await postProductImage({
+                      shopId,
+                      accessToken: apiKey,
+                      localProductId: p.id,
+                      imageUrl: p.image_url,
+                      ideasoftProductId: newIdeasoftId
+                    });
+                  } catch (e) {
+                  }
+                }
+                
+                // Başarılı oldu, durumu SUCCESS olarak güncelle
+                await updateProductStatus(p.sku, newIdeasoftId, 'SUCCESS', null);
+                successCount++;
+                recreatedCount++;
+                setProducts(prev => prev.map(prod =>
+                  prod.id === p.id
+                    ? { ...prod, ideasoft_product_id: newIdeasoftId, _remote: createRes.data, _remoteStatus: 'found', _dirty: false }
+                    : prod
+                ));
+                return result; // Bu ürün için işlem tamamlandı
+              } else {
+                // ideasoft_product_id yoksa updateProductStatus çağrılamaz, sadece logla
+                result.error = normalizeErrorMessage(createRes?.error || 'Ürün oluşturulamadı');
+                // Duplicate hatası ise modal göster
+                if (isDuplicateError(createRes?.error) || isDuplicateError(result.error)) {
+                  showNotification(result.error, 'error');
+                }
+                return result; // Bu ürün için işlem başarısız
+              }
+            }
+            
+            if (isFailed && p.ideasoft_product_id) {
+              // Başarısız olanlar için önce update dene
+              result = await updateIdeasoftProduct({
+                shopId,
+                accessToken: apiKey,
+                productId: p.ideasoft_product_id,
+                productData
+              });
+              
+              // Eğer update başarılı olduysa, detail ve image gönder ve durumu SUCCESS yap
+              if (result?.success) {
+                // Detail gönder
+                if (String(p.description || '').trim()) {
+                  try {
+                    await postProductDetail({
+                      shopId,
+                      accessToken: apiKey,
+                      localProductId: p.id,
+                      details: p.description || '',
+                      extraDetails: ''
+                    });
+                  } catch (e) {
+                  }
+                }
+                
+                // Image gönder
+                if (String(p.image_url || '').trim()) {
+                  try {
+                    await postProductImage({
+                      shopId,
+                      accessToken: apiKey,
+                      localProductId: p.id,
+                      imageUrl: p.image_url,
+                      ideasoftProductId: p.ideasoft_product_id
+                    });
+                  } catch (e) {
+                  }
+                }
+                
+                // Başarılı oldu, durumu SUCCESS olarak güncelle
+                await updateProductStatus(p.sku, p.ideasoft_product_id, 'SUCCESS', null);
+                result.success = true;
+                setProducts(prev => prev.map(prod =>
+                  prod.id === p.id ? { ...prod, _remote: result.data, _remoteStatus: 'found', _dirty: false } : prod
+                ));
+                return result; // Bu ürün için işlem tamamlandı
+              } else {
+                // Eğer update başarısız olduysa, recreate dene
+                const recreate = await recreateDeletedProduct(productData, apiKey, shopId);
+                if (recreate?.success && recreate?.data?.id) {
+                  const newIdeasoftId = recreate.data.id;
+                  result = { success: true, data: recreate.data };
+                  
+                  await updateImportedProduct(p.id, {
+                    name: p.name,
+                    sku: p.sku,
+                    price: Number(p.price),
+                    stockAmount: Number(p.stock_amount),
+                    description: p.description,
+                    imageUrl: p.image_url,
+                    status: Number(p.status),
+                    categoryId: p.categoryId,
+                    ideasoft_product_id: newIdeasoftId
+                  });
+                  
+                  // Detail ve image gönder
+                  if (String(p.description || '').trim()) {
+                    try {
+                      await postProductDetail({
+                        shopId,
+                        accessToken: apiKey,
+                        localProductId: p.id,
+                        details: p.description || '',
+                        extraDetails: ''
+                      });
+                    } catch (e) {
+                    }
+                  }
+                  
+                  if (String(p.image_url || '').trim()) {
+                    try {
+                      await postProductImage({
+                        shopId,
+                        accessToken: apiKey,
+                        localProductId: p.id,
+                        imageUrl: p.image_url,
+                        ideasoftProductId: newIdeasoftId
+                      });
+                    } catch (e) {
+                    }
+                  }
+                  
+                  // Başarılı oldu, durumu SUCCESS olarak güncelle
+                  await updateProductStatus(p.sku, newIdeasoftId, 'SUCCESS', null);
+                  result.success = true;
+                  result.recreated = true;
+                  setProducts(prev => prev.map(prod =>
+                    prod.id === p.id
+                      ? { ...prod, ideasoft_product_id: newIdeasoftId, _remote: recreate.data, _remoteStatus: 'found', _dirty: false }
+                      : prod
+                  ));
+                  return result; // Bu ürün için işlem tamamlandı
+                } else {
+                  // Recreate de başarısız oldu
+                  result.error = normalizeErrorMessage(recreate?.error || 'Ürün yeniden oluşturulamadı');
+                  await updateProductStatus(p.sku, p.ideasoft_product_id || newIdeasoftId, 'FAILED', result.error);
+                  // Duplicate hatası ise modal göster
+                  if (isDuplicateError(recreate?.error) || isDuplicateError(result.error)) {
+                    showNotification(result.error, 'error');
+                  }
+                  return result;
+                }
+              }
+            } else {
+              // Normal update
+              result = await updateIdeasoftProduct({
+                shopId,
+                accessToken: apiKey,
+                productId: p.ideasoft_product_id,
+                productData
+              });
+            }
 
             const is404 = !result?.success && (
               result?.code === 404 ||
@@ -304,10 +571,9 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
             );
 
             if (is404) {
-              deletedCount++;
+              result.deleted = true;
               const recreate = await recreateDeletedProduct(productData, apiKey, shopId);
               if (recreate?.success && recreate?.data?.id) {
-                recreatedCount++;
                 await updateProductStatus(p.sku, recreate.data.id, 'SUCCESS', null);
                 const updatedPayload = {
                   name: p.name,
@@ -341,51 +607,148 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
                   });
                 }
 
-                successCount++;
+                result.success = true;
+                result.recreated = true;
                 setProducts(prev => prev.map(prod =>
                   prod.id === p.id
                     ? { ...prod, ideasoft_product_id: recreate.data.id, _remote: recreate.data, _remoteStatus: 'found', _dirty: false }
                     : prod
                 ));
+                return result;
               } else {
-                await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', recreate?.error || 'Ürün yeniden oluşturulamadı');
+                result.error = recreate?.error || 'Ürün yeniden oluşturulamadı';
+                await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', result.error);
                 setProducts(prev => prev.map(prod =>
                   prod.id === p.id ? { ...prod, _remote: null, _remoteStatus: 'missing' } : prod
                 ));
+                return result;
               }
             } else if (result?.success) {
               await updateProductStatus(p.sku, p.ideasoft_product_id, 'SUCCESS', null);
 
               if (String(p.description || '').trim()) {
-                await postProductDetail({
-                  shopId,
-                  accessToken: apiKey,
-                  localProductId: p.id,
-                  details: p.description || '',
-                  extraDetails: ''
-                });
+                try {
+                  await postProductDetail({
+                    shopId,
+                    accessToken: apiKey,
+                    localProductId: p.id,
+                    details: p.description || '',
+                    extraDetails: ''
+                  });
+                } catch (e) {
+                  console.error('ProductDetail gönderme hatası:', e);
+                }
               }
               if (String(p.image_url || '').trim()) {
-                await postProductImage({
-                  shopId,
-                  accessToken: apiKey,
-                  localProductId: p.id,
-                  imageUrl: p.image_url,
-                  ideasoftProductId: p.ideasoft_product_id
-                });
+                try {
+                  await postProductImage({
+                    shopId,
+                    accessToken: apiKey,
+                    localProductId: p.id,
+                    imageUrl: p.image_url,
+                    ideasoftProductId: p.ideasoft_product_id
+                  });
+                } catch (e) {
+                  console.error('ProductImage gönderme hatası:', e);
+                }
               }
 
-              successCount++;
+              result.success = true;
+              // UI'ı güncelle
+              setProducts(prev => prev.map(prod =>
+                prod.id === p.id ? { ...prod, _remote: result.data, _remoteStatus: 'found', _dirty: false } : prod
+              ));
+              return result;
             } else {
-              await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', result?.error || 'Ideasoft güncellenemedi');
+              result.error = result?.error || 'Ideasoft güncellenemedi';
+              await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', result.error);
+              return result;
             }
           } catch (e) {
-            console.error(`Ürün ${p.id} Ideasoft'a gönderilemedi:`, e);
-            try {
-              await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', e?.message || 'Ideasoft gönderim hatası');
-            } catch {
-              // ignore
+            const errorMsg = normalizeErrorMessage(e?.message || 'Ideasoft gönderim hatası')
+            result.error = errorMsg;
+            if (p.ideasoft_product_id) {
+              await updateProductStatus(p.sku, p.ideasoft_product_id, 'FAILED', errorMsg);
             }
+            return result;
+          }
+        };
+
+        // Tüm ürünleri paralel olarak işle (Promise.allSettled ile)
+        const results = await Promise.allSettled(targetProducts.map(p => processProduct(p)));
+        
+        // Sonuçları topla ve başarısız ürünleri belirle
+        const failedProducts = [];
+        results.forEach((settledResult, index) => {
+          const product = targetProducts[index];
+          const productName = product?.name || product?.sku || `Ürün #${index + 1}`;
+          
+          if (settledResult.status === 'fulfilled') {
+            const r = settledResult.value;
+            if (r.success) {
+              successCount++;
+              if (r.recreated) recreatedCount++;
+              if (r.deleted) deletedCount++;
+            } else if (r.error) {
+              const errorMsg = normalizeErrorMessage(r.error);
+              if (isDuplicateError(r.error) || isDuplicateError(errorMsg)) {
+                failedProducts.push({
+                  name: productName,
+                  sku: product?.sku || '',
+                  error: 'Aynı üründen var'
+                });
+              } else {
+                failedProducts.push({
+                  name: productName,
+                  sku: product?.sku || '',
+                  error: errorMsg
+                });
+              }
+            }
+          } else {
+            const error = settledResult.reason;
+            const errorMsg = normalizeErrorMessage(error);
+            if (isDuplicateError(error) || isDuplicateError(errorMsg)) {
+              failedProducts.push({
+                name: productName,
+                sku: product?.sku || '',
+                error: 'Aynı üründen var'
+              });
+            } else {
+              failedProducts.push({
+                name: productName,
+                sku: product?.sku || '',
+                error: errorMsg
+              });
+            }
+          }
+        });
+        
+        // Başarısız ürünleri modal olarak göster
+        if (failedProducts.length > 0) {
+          const duplicateProducts = failedProducts.filter(p => p.error === 'Aynı üründen var');
+          let modalMessage = `❌ ${failedProducts.length} ürün başarısız oldu!\n\n`;
+          
+          if (duplicateProducts.length > 0) {
+            const productList = duplicateProducts.map(p => `- ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}`).join('\n');
+            modalMessage += `Aynı üründen var:\n${productList}`;
+          }
+          
+          // Diğer hatalar varsa onları da göster
+          const otherErrors = failedProducts.filter(p => p.error !== 'Aynı üründen var');
+          if (otherErrors.length > 0) {
+            if (duplicateProducts.length > 0) modalMessage += '\n\n';
+            const errorList = otherErrors.map(p => `- ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}: ${p.error}`).join('\n');
+            modalMessage += `Başarısız ürünler:\n${errorList}`;
+          }
+          
+          if (modalMessage) {
+            setConfirmState({
+              open: true,
+              title: '❌ Aktarım Başarısız',
+              message: modalMessage,
+              onConfirm: null // Sadece "Tamam" butonu göster
+            });
           }
         }
 
@@ -416,52 +779,111 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handleBulkPullFromIdeasoft = async () => {
-    const remoteProducts = products.filter(p => p._remote);
-    if (remoteProducts.length === 0) {
-      showNotification('Ideasoft\'tan çekilecek veri bulunamadı.', 'warning');
+    // Sadece seçili ürünleri al
+    const selectedIds = Array.from(selectedProducts);
+    if (selectedIds.length === 0) {
+      showNotification('Lütfen çekmek istediğiniz ürünleri seçin.', 'warning');
+      return;
+    }
+    
+    const targetProducts = products.filter(p => selectedIds.includes(p.id) && p.ideasoft_product_id);
+    const selectedCount = selectedIds.length;
+    
+    if (targetProducts.length === 0) {
+      showNotification('Seçili ürünlerde Ideasoft ürün ID\'si bulunamadı.', 'warning');
       return;
     }
 
     setConfirmState({
       open: true,
       title: 'Onay',
-      message: `${remoteProducts.length} ürünü Ideasoft verileriyle güncellemek (DB'ye kaydetmek) istediğinize emin misiniz? Yerel değişiklikleriniz kaybolabilir.`,
+      message: `${selectedCount} ürün seçildi. ${targetProducts.length} ürünü Ideasoft verileriyle güncellemek (DB'ye kaydetmek) istediğinize emin misiniz? Yerel değişiklikleriniz kaybolabilir.`,
       onConfirm: async () => {
         setConfirmState({ open: false, title: '', message: '', onConfirm: null });
         setBulkPulling(true);
         let successCount = 0;
+        let errorCount = 0;
 
-        for (const p of remoteProducts) {
+        const accessToken = appConfig?.apiKey;
+        const shopId = appConfig?.shopId;
+
+        if (!accessToken || !shopId) {
+          showNotification('Shop ID veya Access Token eksik!', 'error');
+          setBulkPulling(false);
+          return;
+        }
+
+        for (const p of targetProducts) {
           try {
-            const r = p._remote;
+            // Ideasoft API'den tam ürün bilgisini çek
+            const productResult = await getIdeasoftProduct({
+              shopId,
+              accessToken,
+              productId: p.ideasoft_product_id
+            });
 
-            const remoteDescription = String(r?.details ?? '').trim();
-            const remoteImageCandidate =
-              (r?.images && (r.images[0]?.originalUrl || r.images[0]?.thumbUrl || r.images[0]?.filename)) || '';
-            const remoteImage = String(remoteImageCandidate || '').trim();
+            if (!productResult?.success || !productResult?.data) {
+              errorCount++;
+              continue;
+            }
 
-            const shouldOverwriteDescription = remoteDescription.length > 0;
-            const shouldOverwriteImage = remoteImage.length > 0 && /^(https?:\/\/)/i.test(remoteImage);
+            const productData = productResult.data;
+            
+            // Ürün detaylarını çek (details, extraDetails)
+            let details = '';
+            let extraDetails = '';
+            if (productData.detail) {
+              details = String(productData.detail.details || '').trim();
+              extraDetails = String(productData.detail.extraDetails || '').trim();
+            }
 
+            // Resimleri çek (ilk resim)
+            let imageUrl = '';
+            if (productData.images && Array.isArray(productData.images) && productData.images.length > 0) {
+              const firstImage = productData.images[0];
+              imageUrl = String(firstImage.originalUrl || firstImage.thumbUrl || firstImage.filename || '').trim();
+            }
+
+            // Kategori bilgisini çek (ilk kategori)
+            let categoryId = null;
+            if (productData.categories && Array.isArray(productData.categories) && productData.categories.length > 0) {
+              categoryId = Number(productData.categories[0].id) || null;
+            }
+
+            // Fiyat bilgisini çek
+            const price = Number(productData.price1 || productData.price || 0);
+
+            // Stok bilgisini çek
+            const stockAmount = Number(productData.stockAmount || productData.stock || 0);
+
+            // Status bilgisini çek
+            const status = Number(productData.status) === 1 ? 1 : 0;
+
+            // Tüm verileri payload'a ekle
             const payload = {
-              name: r.name ?? '',
-              sku: r.sku ?? '',
-              price: Number(r.price1) || 0,
-              stockAmount: Number(r.stockAmount) || 0,
-              description: shouldOverwriteDescription ? remoteDescription : (p.description ?? ''),
-              imageUrl: shouldOverwriteImage ? remoteImage : (p.image_url ?? ''),
-              status: Number(r.status) ? 1 : 0,
-              categoryId: r.categoryId ?? p.categoryId ?? null
+              name: String(productData.name || '').trim(),
+              sku: String(productData.sku || '').trim(),
+              price: price,
+              stockAmount: stockAmount,
+              description: details || extraDetails || '',
+              imageUrl: imageUrl,
+              status: status,
+              categoryId: categoryId
             };
+
             await updateImportedProduct(p.id, payload);
             successCount++;
           } catch (e) {
-            console.error(`Ürün ${p.id} Ideasoft'tan çekilemedi:`, e);
+            errorCount++;
           }
         }
 
         await load();
-        showNotification(`${successCount} ürün Ideasoft verileriyle senkronize edildi (DB güncellendi).`, 'success');
+        if (errorCount > 0) {
+          showNotification(`${successCount} ürün başarıyla çekildi, ${errorCount} ürün çekilemedi.`, 'warning');
+        } else {
+          showNotification(`${successCount} ürün Ideasoft verileriyle senkronize edildi (DB güncellendi).`, 'success');
+        }
         setBulkPulling(false);
       }
     });
@@ -522,18 +944,21 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
               extraDetails: ''
             });
             if (!dRes?.success) {
-              errors.push(`Açıklama: ${dRes?.error || 'Gönderilemedi'}`);
-              console.error('ProductDetail gönderilemedi:', dRes);
+              const errorMsg = normalizeErrorMessage(dRes?.error || 'Gönderilemedi')
+              errors.push(`Açıklama: ${errorMsg}`);
+              // Duplicate hatası ise modal göster
+              if (isDuplicateError(dRes?.error) || dRes?.duplicate) {
+                showNotification(errorMsg, 'error');
+              }
             } else {
               if (dRes?.duplicate) {
-                console.log('ℹ️ ProductDetail zaten mevcut (duplicate)');
+                showNotification('Aynı üründen var', 'error');
               } else {
-                console.log('✅ ProductDetail başarıyla gönderildi');
               }
             }
           } catch (e) {
-            errors.push(`Açıklama: ${e.message || 'Gönderilemedi'}`);
-            console.error('ProductDetail hatası:', e);
+            const errorMsg = normalizeErrorMessage(e.message || 'Gönderilemedi')
+            errors.push(`Açıklama: ${errorMsg}`);
           }
         }
         
@@ -547,18 +972,21 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
               ideasoftProductId: row.ideasoft_product_id
             });
             if (!iRes?.success) {
-              errors.push(`Resim: ${iRes?.error || 'Gönderilemedi'}`);
-              console.error('ProductImage gönderilemedi:', iRes);
+              const errorMsg = normalizeErrorMessage(iRes?.error || 'Gönderilemedi')
+              errors.push(`Resim: ${errorMsg}`);
+              // Duplicate hatası ise modal göster
+              if (isDuplicateError(iRes?.error) || iRes?.duplicate) {
+                showNotification(errorMsg, 'error');
+              }
             } else {
               if (iRes?.duplicate) {
-                console.log('ℹ️ ProductImage zaten mevcut (duplicate)');
+                showNotification('Aynı üründen var', 'error');
               } else {
-                console.log('✅ ProductImage başarıyla gönderildi');
               }
             }
           } catch (e) {
-            errors.push(`Resim: ${e.message || 'Gönderilemedi'}`);
-            console.error('ProductImage hatası:', e);
+            const errorMsg = normalizeErrorMessage(e.message || 'Gönderilemedi')
+            errors.push(`Resim: ${errorMsg}`);
           }
         }
         
@@ -568,7 +996,6 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           throw new Error(errors.join('; '));
         } else if (errors.length > 0) {
           // Her iki işlem de denenmişse ama başarısız olmuşsa hata fırlat
-          console.warn('⚠️ Bazı işlemler başarısız oldu:', errors);
           // Yine de devam et, sadece uyarı ver
         }
 
@@ -578,12 +1005,14 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       }
     } catch (e) {
       try {
-        await updateProductStatus(row.sku, row.ideasoft_product_id, 'FAILED', e?.message || 'Ideasoft güncelleme hatası');
+        const errorMsg = normalizeErrorMessage(e?.message || 'Ideasoft güncelleme hatası')
+        await updateProductStatus(row.sku, row.ideasoft_product_id, 'FAILED', errorMsg);
         if (batch?.id) await updateBatchStats(batch.id);
       } catch {
         // ignore
       }
-      showNotification('Ideasoft güncelleme hatası: ' + e.message, 'error');
+      const errorMsg = normalizeErrorMessage(e.message)
+      showNotification('Ideasoft güncelleme hatası: ' + errorMsg, 'error');
     } finally {
       setPostingId(null);
     }
@@ -608,7 +1037,12 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       const result = await recreateDeletedProduct(productData, apiKey, shopId);
   
       if (!result?.success) {
-        throw new Error(result?.error || 'Ürün yeniden oluşturulamadı');
+        const errorMsg = normalizeErrorMessage(result?.error || 'Ürün yeniden oluşturulamadı');
+        // Duplicate hatası ise modal göster
+        if (isDuplicateError(result?.error) || isDuplicateError(errorMsg)) {
+          showNotification(errorMsg, 'error');
+        }
+        throw new Error(errorMsg);
       }
       
       // Update the database with the new Ideasoft product ID
@@ -626,12 +1060,50 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       
       await updateImportedProduct(row.id, updatedPayload);
       
-      // Update the product to reflect that it's now active in Ideasoft
-      setProducts(prev => prev.map(p =>
-        p.id !== row.id ? p : { ...p, ideasoft_product_id: result.data.id, _remote: result.data, _dirty: false }
-      ));
+      const newIdeasoftId = result.data.id;
       
-      showNotification('Ürün Ideasoft\'a başarıyla yeniden yüklendi.', 'success');
+      // Send product detail if available
+      if (String(row.description || '').trim()) {
+        try {
+          const dRes = await postProductDetail({
+            shopId,
+            accessToken: apiKey,
+            localProductId: row.id,
+            details: row.description || '',
+            extraDetails: ''
+          });
+          if (!dRes?.success) {
+          }
+        } catch (e) {
+          console.error('ProductDetail gönderme hatası:', e);
+        }
+      }
+      
+      // Send product image if available
+      if (String(row.image_url || '').trim()) {
+        try {
+          const iRes = await postProductImage({
+            shopId,
+            accessToken: apiKey,
+            localProductId: row.id,
+            imageUrl: row.image_url,
+            ideasoftProductId: newIdeasoftId
+          });
+          if (!iRes?.success) {
+          }
+        } catch (e) {
+          console.error('ProductImage gönderme hatası:', e);
+        }
+      }
+      
+      // Update product status
+      await updateProductStatus(row.sku, newIdeasoftId, 'SUCCESS', null);
+      if (batch?.id) await updateBatchStats(batch.id);
+      
+      // Reload data to get fresh state
+      await load();
+      
+      showNotification('Ürün Ideasoft\'a başarıyla yeniden yüklendi (detay + resim gönderildi).', 'success');
     } catch (e) {
       showNotification('Yeniden yükleme hatası: ' + e.message, 'error');
     } finally {
@@ -700,7 +1172,12 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         };
         const createRes = await recreateDeletedProduct(productData, apiKey, shopId);
         if (!createRes?.success || !createRes?.data?.id) {
-          throw new Error(createRes?.error || 'Ürün Ideasoft\'a gönderilemedi');
+          const errorMsg = normalizeErrorMessage(createRes?.error || 'Ürün Ideasoft\'a gönderilemedi');
+          // Duplicate hatası ise modal göster
+          if (isDuplicateError(createRes?.error) || isDuplicateError(errorMsg)) {
+            showNotification(errorMsg, 'error');
+          }
+          throw new Error(errorMsg);
         }
 
         ensuredIdeasoftId = createRes.data.id;
@@ -753,12 +1230,14 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       await load();
     } catch (e) {
       try {
-        await updateProductStatus(row.sku, row.ideasoft_product_id, 'FAILED', e?.message || 'Tekrar gönderme hatası');
+        const errorMsg = normalizeErrorMessage(e?.message || 'Tekrar gönderme hatası')
+        await updateProductStatus(row.sku, row.ideasoft_product_id, 'FAILED', errorMsg);
         if (batch?.id) await updateBatchStats(batch.id);
       } catch {
         // ignore
       }
-      showNotification('Tekrar gönderme hatası: ' + e.message, 'error');
+      const errorMsg = normalizeErrorMessage(e.message)
+      showNotification('Tekrar gönderme hatası: ' + errorMsg, 'error');
     } finally {
       setPostingId(null);
     }
@@ -793,18 +1272,29 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           <div className="confirm-title">{confirmState.title}</div>
           <div className="confirm-message">{confirmState.message}</div>
           <div className="confirm-actions">
-            <button
-              className="btn btn-secondary"
-              onClick={() => setConfirmState({ open: false, title: '', message: '', onConfirm: null })}
-            >
-              İPTAL
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => confirmState.onConfirm && confirmState.onConfirm()}
-            >
-              ONAYLA
-            </button>
+            {confirmState.onConfirm ? (
+              <>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmState({ open: false, title: '', message: '', onConfirm: null })}
+                >
+                  İptal
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => confirmState.onConfirm && confirmState.onConfirm()}
+                >
+                  Onayla
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-primary"
+                onClick={() => setConfirmState({ open: false, title: '', message: '', onConfirm: null })}
+              >
+                Tamam
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -868,6 +1358,21 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           <table className="detail-table">
             <thead>
               <tr>
+                <th width="50" className="text-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedProducts.size > 0 && selectedProducts.size === products.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedProducts(new Set(products.map(p => p.id)));
+                      } else {
+                        setSelectedProducts(new Set());
+                      }
+                    }}
+                    className="select-all-checkbox"
+                  />
+                </th>
+                <th width="90">DURUM</th>
                 <th width="40">ID</th>
                 <th width="220">SKU</th>
                 <th width="400">ÜRÜN ADI</th>
@@ -881,8 +1386,36 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => (
+              {products.map((p) => {
+                const transferStatus = String(p.transfer_status || '').toUpperCase();
+                const isFailed = transferStatus === 'FAILED';
+                const isSuccess = transferStatus === 'SUCCESS';
+                return (
                 <tr key={p.id} className={`${p._dirty ? 'is-dirty' : ''} ${p._remoteStatus === 'missing' && p.ideasoft_product_id ? 'product-deleted' : ''}`}>
+                  <td className="text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedProducts.has(p.id)}
+                      onChange={(e) => {
+                        const newSelected = new Set(selectedProducts);
+                        if (e.target.checked) {
+                          newSelected.add(p.id);
+                        } else {
+                          newSelected.delete(p.id);
+                        }
+                        setSelectedProducts(newSelected);
+                      }}
+                      className="row-checkbox-select"
+                    />
+                  </td>
+                  <td className="text-center cell-status">
+                    {isFailed && (
+                      <span className="status-icon-failed" title="Başarısız gönderim">❌</span>
+                    )}
+                    {isSuccess && (
+                      <span className="status-icon-success" title="Başarılı gönderim">✅</span>
+                    )}
+                  </td>
                   <td className="text-center cell-id">{p.id}</td>
                   <td>
                     <input
@@ -1027,7 +1560,8 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

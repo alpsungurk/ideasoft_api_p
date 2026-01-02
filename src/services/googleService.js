@@ -15,9 +15,17 @@ export const findImageWithGoogle = async (query) => {
       body: JSON.stringify({ query })
     })
     const payload = await response.json().catch(() => null)
+    
+    // Quota exceeded kontrolü
+    if (payload?.quotaExceeded || (payload?.error && payload.error.includes('hakkınız doldu'))) {
+      throw new Error('GOOGLE_QUOTA_EXCEEDED')
+    }
+    
     return payload?.url || null
   } catch (error) {
-    console.warn('Google Image Search Error:', error.message);
+    if (error.message === 'GOOGLE_QUOTA_EXCEEDED') {
+      throw error
+    }
     return null;
   }
 }
@@ -203,9 +211,15 @@ export const enrichProductImagesOnly = async (products, onProgress) => {
     }
 
     const query = `${p.brand || ''} ${p.name}`.trim();
-    const imageUrl = await findImageWithGoogle(query);
-    if (imageUrl) {
-      p.image = imageUrl;
+    try {
+      const imageUrl = await findImageWithGoogle(query);
+      if (imageUrl) {
+        p.image = imageUrl;
+      }
+    } catch (error) {
+      if (error.message === 'GOOGLE_QUOTA_EXCEEDED') {
+        throw error; // Quota exceeded hatasını yukarı fırlat
+      }
     }
 
     processedCount++;
@@ -214,7 +228,7 @@ export const enrichProductImagesOnly = async (products, onProgress) => {
         current: processedCount,
         total: products.length,
         product: p.name,
-        message: imageUrl ? 'Resim bulundu' : 'Resim bulunamadı'
+        message: p.image ? 'Resim bulundu' : 'Resim bulunamadı'
       });
     }
 

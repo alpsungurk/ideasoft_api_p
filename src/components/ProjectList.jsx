@@ -31,7 +31,6 @@ const ProjectList = ({ onSelectProject, onCreateNew }) => {
         setError(result.error || 'Projeler yüklenirken bir hata oluştu.');
       }
     } catch (err) {
-      console.error('Projeler yüklenemedi:', err);
       setError('Veritabanı bağlantısı kurulamadı veya sunucu hatası oluştu.');
     } finally {
       setLoading(false);
@@ -85,12 +84,37 @@ const ProjectList = ({ onSelectProject, onCreateNew }) => {
         </div>
       ) : (
         <div className="projects-grid">
-          {projects.map((project) => (
+          {projects.map((project) => {
+            const total = project.total_products || 0;
+            const successful = project.successful_products || 0;
+            const failed = project.failed_products || 0;
+            
+            // Durum belirleme mantığı
+            let statusText = 'İşleniyor';
+            let statusClass = 'processing';
+            
+            if (total > 0) {
+              if (successful === total) {
+                // Tüm ürünler başarılı
+                statusText = 'TAMAMLANDI';
+                statusClass = 'completed';
+              } else if (successful === 0 && failed === total) {
+                // Hiçbiri başarılı değil, hepsi başarısız
+                statusText = 'BAŞARISIZ';
+                statusClass = 'failed';
+              } else if (successful > 0 && successful < total) {
+                // Bazıları başarılı, bazıları başarısız
+                statusText = 'EKSİK';
+                statusClass = 'incomplete';
+              }
+            }
+            
+            return (
             <div key={project.id} className="project-card" onClick={() => onSelectProject(project.id)}>
               <div className="project-card-header">
                 <h3>{project.name}</h3>
-                <span className={`status-badge ${String(project.status).toLowerCase()}`}>
-                  {project.status === 'COMPLETED' ? 'Tamamlandı' : 'İşleniyor'}
+                <span className={`status-badge ${statusClass}`}>
+                  {statusText}
                 </span>
               </div>
               <div className="project-date">
@@ -112,7 +136,8 @@ const ProjectList = ({ onSelectProject, onCreateNew }) => {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

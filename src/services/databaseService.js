@@ -27,7 +27,9 @@ export const createBatch = async (products, projectName) => {
  */
 export const getBatches = async () => {
     try {
-        const response = await axios.get(`${API_BASE}/batches`)
+        const response = await axios.get(`${API_BASE}/batches`, {
+            timeout: 60000 // 60 saniye timeout
+        })
         return response.data
     } catch (error) {
         console.error('Get Batches Error:', error)
@@ -41,11 +43,14 @@ export const getBatches = async () => {
  */
 export const getBatchDetails = async (id) => {
     try {
-        const response = await axios.get(`${API_BASE}/batches/${id}`)
+        const response = await axios.get(`${API_BASE}/batches/${id}`, {
+            timeout: 60000 // 60 saniye timeout
+        })
         return response.data
     } catch (error) {
         console.error('Get Batch Details Error:', error)
-        return { success: false, error: error.message }
+        const errorMsg = error.response?.data?.error || error.message || 'Veritabanı bağlantı hatası'
+        return { success: false, error: errorMsg }
     }
 }
 

@@ -70,6 +70,16 @@
   color: #b45309;
 }
 
+.status-badge.incomplete {
+  background-color: #fef3c7;
+  color: #d97706;
+}
+
+.status-badge.failed {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
 .project-date {
   font-size: 0.85rem;
   color: var(--text-light);
