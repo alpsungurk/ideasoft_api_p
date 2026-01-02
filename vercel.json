@@ -36,9 +36,6 @@
     "api/db/batches.js": {
       "maxDuration": 30
     },
-    "api/db/batches-id.js": {
-      "maxDuration": 30
-    },
     "api/db/batches/[id].js": {
       "maxDuration": 30
     },
@@ -51,13 +48,7 @@
     "api/db/imported-products/[id].js": {
       "maxDuration": 30
     },
-    "api/db/update-batch-stats.js": {
-      "maxDuration": 30
-    },
-    "api/db/update-status.js": {
-      "maxDuration": 30
-    },
-    "api/db/update-category.js": {
+    "api/db/update.js": {
       "maxDuration": 30
     }
   }
