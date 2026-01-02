@@ -482,7 +482,8 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
-        }
+        },
+        timeout: 15000
       }
     )
 
@@ -500,14 +501,24 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
 
       return tokenData
     } else {
-      throw new Error('Token alınamadı: Geçersiz yanıt')
+      const errorMsg = response.data?.error || 'Token alınamadı: Geçersiz yanıt'
+      throw new Error(String(errorMsg))
     }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.error_description ||
-      error.response?.data?.message ||
-      error.message ||
-      'Token alınamadı'
+    let errorMessage = 'Token alınamadı'
+    
+    if (error.response) {
+      errorMessage = error.response.data?.error ||
+        error.response.data?.error_description ||
+        error.response.data?.message ||
+        error.message ||
+        'Token alınamadı'
+    } else if (error.request) {
+      errorMessage = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.'
+    } else {
+      errorMessage = error.message || 'Bilinmeyen hata oluştu'
+    }
+    
     throw new Error(String(errorMessage))
   }
 }
