@@ -16,15 +16,30 @@ export default async function handler(req, res) {
       return res.status(200).end()
     }
 
-    // Vercel IP adresini al
-    const vercelIp = req.headers['x-forwarded-for'] || 
+    // Vercel IP adresini al - farklı yöntemler dene
+    const vercelIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
                      req.headers['x-real-ip'] || 
+                     req.headers['x-vercel-forwarded-for'] ||
+                     req.headers['cf-connecting-ip'] ||
                      req.connection?.remoteAddress || 
                      req.socket?.remoteAddress ||
+                     req.ip ||
                      'unknown'
     
+    // Vercel'in kendi environment variable'ları
+    const vercelRegion = process.env.VERCEL_REGION || 'unknown'
+    const vercelUrl = process.env.VERCEL_URL || 'unknown'
+    
     console.log('🌐 Vercel IP Address:', vercelIp)
-    console.log('🌐 Request Headers:', JSON.stringify(req.headers, null, 2))
+    console.log('🌐 Vercel Region:', vercelRegion)
+    console.log('🌐 Vercel URL:', vercelUrl)
+    console.log('🌐 All Request Headers:', JSON.stringify(req.headers, null, 2))
+    console.log('🌐 Request Object Keys:', Object.keys(req))
+    console.log('🌐 Connection Info:', {
+      remoteAddress: req.connection?.remoteAddress,
+      socketRemoteAddress: req.socket?.remoteAddress,
+      ip: req.ip
+    })
 
     const config = {
       host: process.env.DB_HOST || 'localhost',
