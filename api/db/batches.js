@@ -41,17 +41,25 @@ export default async function handler(req, res) {
       return res.status(405).json({ success: false, error: 'Method not allowed' })
     }
 
-    // Vercel IP adresini al
-    const vercelIp = req.headers['x-forwarded-for'] || 
+    // Vercel IP adresini al - farklı yöntemler dene
+    const vercelIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
                      req.headers['x-real-ip'] || 
+                     req.headers['x-vercel-forwarded-for'] ||
+                     req.headers['cf-connecting-ip'] ||
                      req.connection?.remoteAddress || 
                      req.socket?.remoteAddress ||
+                     req.ip ||
                      'unknown'
+    
+    // Vercel'in kendi environment variable'ları
+    const vercelRegion = process.env.VERCEL_REGION || 'unknown'
+    const vercelUrl = process.env.VERCEL_URL || 'unknown'
     
     console.log('📥 Get Batches Request:', {
       method: req.method,
       vercelIp: vercelIp,
-      allHeaders: req.headers,
+      vercelRegion: vercelRegion,
+      vercelUrl: vercelUrl,
       hasEnv: {
         DB_HOST: !!process.env.DB_HOST,
         DB_USER: !!process.env.DB_USER,
@@ -62,7 +70,15 @@ export default async function handler(req, res) {
     })
     
     console.log('🌐 Vercel IP Address:', vercelIp)
-    console.log('🌐 Request Headers:', JSON.stringify(req.headers, null, 2))
+    console.log('🌐 Vercel Region:', vercelRegion)
+    console.log('🌐 Vercel URL:', vercelUrl)
+    console.log('🌐 All Request Headers:', JSON.stringify(req.headers, null, 2))
+    console.log('🌐 Request Object Keys:', Object.keys(req))
+    console.log('🌐 Connection Info:', {
+      remoteAddress: req.connection?.remoteAddress,
+      socketRemoteAddress: req.socket?.remoteAddress,
+      ip: req.ip
+    })
 
     const pool = getPool()
     connection = await pool.getConnection()
