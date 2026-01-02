@@ -508,7 +508,7 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
       error.response?.data?.message ||
       error.message ||
       'Token alınamadı'
-    throw new Error(errorMessage)
+    throw new Error(String(errorMessage))
   }
 }
 

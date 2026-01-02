@@ -79,9 +79,7 @@ module.exports = async function handler(req, res) {
     
     return res.status(error.response?.status || 500).json({
       success: false,
-      error: errorMessage,
-      errorCode: error.response?.data?.error,
-      errorDetails: error.response?.data
+      error: String(errorMessage)
     })
   }
 }

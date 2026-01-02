@@ -59,7 +59,8 @@ const AuthCallback = () => {
 
       } catch (err) {
         setStatus('error');
-        setMessage(err.message || 'Token alınırken bir hata oluştu.');
+        const errorMsg = err.response?.data?.error || err.message || 'Token alınırken bir hata oluştu.';
+        setMessage(String(errorMsg));
         setTimeout(() => navigate('/'), 4000);
       }
     };
