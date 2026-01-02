@@ -9,6 +9,13 @@ const getApiBase = () => {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL.replace(/\/$/, '')
     return `${supabaseUrl}/functions/v1`
   }
+  
+  // Production'da VITE_SUPABASE_URL zorunlu
+  if (import.meta.env.MODE === 'production' || import.meta.env.PROD) {
+    console.error('❌ VITE_SUPABASE_URL environment variable is missing in production!')
+    throw new Error('Supabase configuration missing. Please set VITE_SUPABASE_URL in Vercel environment variables.')
+  }
+  
   // Fallback: Local development'da server.js proxy kullan
   return '/api/db'
 }
