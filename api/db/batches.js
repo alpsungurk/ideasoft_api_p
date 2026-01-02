@@ -41,8 +41,17 @@ export default async function handler(req, res) {
       return res.status(405).json({ success: false, error: 'Method not allowed' })
     }
 
+    // Vercel IP adresini al
+    const vercelIp = req.headers['x-forwarded-for'] || 
+                     req.headers['x-real-ip'] || 
+                     req.connection?.remoteAddress || 
+                     req.socket?.remoteAddress ||
+                     'unknown'
+    
     console.log('📥 Get Batches Request:', {
       method: req.method,
+      vercelIp: vercelIp,
+      allHeaders: req.headers,
       hasEnv: {
         DB_HOST: !!process.env.DB_HOST,
         DB_USER: !!process.env.DB_USER,
@@ -51,6 +60,9 @@ export default async function handler(req, res) {
         PORT: process.env.PORT || process.env.DB_PORT
       }
     })
+    
+    console.log('🌐 Vercel IP Address:', vercelIp)
+    console.log('🌐 Request Headers:', JSON.stringify(req.headers, null, 2))
 
     const pool = getPool()
     connection = await pool.getConnection()

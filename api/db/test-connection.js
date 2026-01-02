@@ -16,6 +16,16 @@ export default async function handler(req, res) {
       return res.status(200).end()
     }
 
+    // Vercel IP adresini al
+    const vercelIp = req.headers['x-forwarded-for'] || 
+                     req.headers['x-real-ip'] || 
+                     req.connection?.remoteAddress || 
+                     req.socket?.remoteAddress ||
+                     'unknown'
+    
+    console.log('🌐 Vercel IP Address:', vercelIp)
+    console.log('🌐 Request Headers:', JSON.stringify(req.headers, null, 2))
+
     const config = {
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.PORT || process.env.DB_PORT || '3306', 10),
@@ -30,7 +40,8 @@ export default async function handler(req, res) {
       port: config.port,
       user: config.user,
       database: config.database,
-      hasPassword: !!config.password
+      hasPassword: !!config.password,
+      vercelIp: vercelIp
     })
 
     let connection = null

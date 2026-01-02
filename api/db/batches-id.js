@@ -29,10 +29,6 @@ function getPool() {
 export default async function handler(req, res) {
   let connection = null
   try {
-    if (req.method !== 'GET') {
-      return res.status(405).json({ success: false, error: 'Method not allowed' })
-    }
-
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
@@ -41,6 +37,20 @@ export default async function handler(req, res) {
     if (req.method === 'OPTIONS') {
       return res.status(200).end()
     }
+
+    if (req.method !== 'GET') {
+      return res.status(405).json({ success: false, error: 'Method not allowed' })
+    }
+
+    // Vercel IP adresini al
+    const vercelIp = req.headers['x-forwarded-for'] || 
+                     req.headers['x-real-ip'] || 
+                     req.connection?.remoteAddress || 
+                     req.socket?.remoteAddress ||
+                     'unknown'
+    
+    console.log('🌐 Vercel IP Address:', vercelIp)
+    console.log('🌐 Request Headers:', JSON.stringify(req.headers, null, 2))
 
     // Vercel'de query parametresi olarak id alınır
     const batchId = parseInt(req.query.id, 10)
