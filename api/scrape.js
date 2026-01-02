@@ -1,8 +1,8 @@
 // Vercel Serverless Function - Web scraping için
-const axios = require('axios')
-const cheerio = require('cheerio')
+import axios from 'axios'
+import cheerio from 'cheerio'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')

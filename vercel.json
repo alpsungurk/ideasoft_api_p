@@ -32,6 +32,33 @@
     },
     "api/product-to-categories.js": {
       "maxDuration": 10
+    },
+    "api/db/batches.js": {
+      "maxDuration": 30
+    },
+    "api/db/batches-id.js": {
+      "maxDuration": 30
+    },
+    "api/db/batches/[id].js": {
+      "maxDuration": 30
+    },
+    "api/db/create-batch.js": {
+      "maxDuration": 30
+    },
+    "api/db/test-connection.js": {
+      "maxDuration": 10
+    },
+    "api/db/imported-products/[id].js": {
+      "maxDuration": 30
+    },
+    "api/db/update-batch-stats.js": {
+      "maxDuration": 30
+    },
+    "api/db/update-status.js": {
+      "maxDuration": 30
+    },
+    "api/db/update-category.js": {
+      "maxDuration": 30
     }
   }
 }
