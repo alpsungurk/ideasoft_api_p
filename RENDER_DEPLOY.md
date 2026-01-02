@@ -49,36 +49,61 @@ npm start
 
 **Health Check Path:** `/api/health`
 
-### 4. MySQL Database Kurulumu
+### 4. MySQL Database Kurulumu (Natro)
 
-Render'da MySQL yok, bu yüzden harici bir servis kullanmanız gerekiyor:
+Natro'da MySQL kullanıyorsanız, Render'dan Natro MySQL'e bağlanmanız gerekiyor:
 
-#### Seçenek 1: PlanetScale (Önerilen - Ücretsiz)
+#### Natro MySQL Ayarları
 
-1. [PlanetScale.com](https://planetscale.com) adresine gidin
-2. Ücretsiz hesap oluşturun
-3. Yeni database oluşturun
-4. Connection bilgilerini alın
-5. Render'da Environment Variables'a ekleyin:
+1. **Natro Panel'e giriş yapın**
+   - [Natro.com](https://www.natro.com) → Panel girişi
+
+2. **MySQL Database Bilgilerini Alın**
+   - Plesk veya cPanel'den MySQL database bilgilerinizi alın
+   - Host: Genellikle `localhost` veya `mysql.natro.com` veya IP adresi
+   - Port: `3306`
+   - Database Name: Veritabanı adı
+   - Username: Kullanıcı adı
+   - Password: Şifre
+
+3. **Natro'da Remote MySQL Erişimi Açın**
+   - Plesk: **Databases** > **Remote MySQL** > Render'ın IP adresini ekleyin
+   - cPanel: **Remote MySQL** > Render'ın IP adresini ekleyin
+   - **ÖNEMLİ:** Render'ın IP adresini öğrenmek için Render dashboard'da **Events** sekmesine bakın veya support'a sorun
+   - Veya **"Herhangi bir ana bilgisayardan"** seçeneğini aktif edin (güvenlik için önerilmez ama test için kullanılabilir)
+
+4. **Render'da Environment Variables Ekle**
+
+Render dashboard'da **Environment** sekmesine gidin ve şunları ekleyin:
 
 ```env
-DB_HOST=your-planetscale-host.psdb.cloud
+DB_HOST=mysql.natro.com
+# veya
+DB_HOST=your-natro-mysql-host
+# veya IP adresi
+DB_HOST=123.456.789.0
+
 DB_PORT=3306
-DB_USER=your-username
-DB_PASSWORD=your-password
-DB_NAME=your-database-name
+DB_USER=your_natro_db_user
+DB_PASSWORD=your_natro_db_password
+DB_NAME=your_database_name
 ```
 
-#### Seçenek 2: AWS RDS
-- MySQL instance oluşturun
-- Connection bilgilerini Render'a ekleyin
+**Not:** Natro'da host genellikle:
+- `localhost` (sadece aynı sunucudan)
+- `mysql.natro.com` 
+- Veya özel bir host adı
+- Veya IP adresi
 
-#### Seçenek 3: DigitalOcean Managed Database
-- MySQL database oluşturun
-- Connection bilgilerini Render'a ekleyin
+Eğer `localhost` çalışmazsa, Natro destek ekibinden doğru host adresini öğrenin.
 
-#### Seçenek 4: Başka MySQL Hosting
-- Herhangi bir MySQL hosting servisi kullanabilirsiniz
+#### Alternatif: PlanetScale (Eğer Natro bağlantısı çalışmazsa)
+
+Eğer Natro'dan Render'a bağlantı kurmakta sorun yaşarsanız:
+
+1. [PlanetScale.com](https://planetscale.com) → Ücretsiz hesap
+2. Yeni database oluşturun
+3. Connection bilgilerini Render'a ekleyin
 
 ### 5. Environment Variables Ekle
 
