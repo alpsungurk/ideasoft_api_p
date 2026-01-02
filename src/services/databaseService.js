@@ -43,7 +43,8 @@ export const getBatches = async () => {
  */
 export const getBatchDetails = async (id) => {
     try {
-        const response = await axios.get(`${API_BASE}/batches/${id}`, {
+        // Vercel'de query parametresi olarak id gönder
+        const response = await axios.get(`${API_BASE}/batches-id?id=${id}`, {
             timeout: 60000 // 60 saniye timeout
         })
         return response.data
