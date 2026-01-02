@@ -1,5 +1,3 @@
-import axios from 'axios'
-
 // Supabase Edge Functions URL'i veya local proxy
 // Production'da: https://project-id.supabase.co/functions/v1
 // Local'de: /api/db (Vite proxy ile server.js'e yönlendirilir)
@@ -26,6 +24,7 @@ const EDGE_FUNCTIONS = {
   BATCH_BY_ID: 'db-batch-by-id',
   CREATE_BATCH: 'db-create-batch',
   UPDATE_PRODUCT: 'db-update-product',
+  UPDATE_PRODUCTS_BATCH: 'db-update-products-batch',
   UPDATE_STATUS: 'db-update-status',
   UPDATE_CATEGORY: 'db-update-category',
   UPDATE_BATCH_STATS: 'db-update-batch-stats'
@@ -55,18 +54,22 @@ export const createBatch = async (products, projectName) => {
             ? `${apiBase}/${EDGE_FUNCTIONS.CREATE_BATCH}`
             : `${apiBase}/create-batch`
         
-        const response = await axios.post(url, { products, projectName }, {
-            headers: getAuthHeaders()
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ products, projectName })
         })
 
-        if (response.data && response.data.success) {
-            return response.data
+        const data = await response.json().catch(() => ({}))
+
+        if (data && data.success) {
+            return data
         } else {
-            throw new Error(response.data?.error || 'Proje oluşturulamadı')
+            throw new Error(data?.error || 'Proje oluşturulamadı')
         }
     } catch (error) {
         console.error('Batch Create Error:', error)
-        throw new Error(error.response?.data?.error || error.message || 'Proje oluşturulamadı')
+        throw new Error(error.message || 'Proje oluşturulamadı')
     }
 }
 
@@ -81,14 +84,22 @@ export const getBatches = async () => {
             ? `${apiBase}/${EDGE_FUNCTIONS.BATCHES}`
             : `${apiBase}/batches`
         
-        const response = await axios.get(url, {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 60000)
+
+        const response = await fetch(url, {
+            method: 'GET',
             headers: getAuthHeaders(),
-            timeout: 60000 // 60 saniye timeout
+            signal: controller.signal
         })
-        return response.data
+
+        clearTimeout(timeoutId)
+
+        const data = await response.json().catch(() => ({ success: false, error: 'Sunucu hatası oluştu' }))
+        return data
     } catch (error) {
         console.error('Get Batches Error:', error)
-        const errorMsg = error.response?.data?.error || error.message || 'Sunucu hatası oluştu'
+        const errorMsg = error.message || 'Sunucu hatası oluştu'
         return { success: false, error: errorMsg }
     }
 }
@@ -104,14 +115,22 @@ export const getBatchDetails = async (id) => {
             ? `${apiBase}/${EDGE_FUNCTIONS.BATCH_BY_ID}/${id}`
             : `${apiBase}/batches/${id}`
         
-        const response = await axios.get(url, {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 60000)
+
+        const response = await fetch(url, {
+            method: 'GET',
             headers: getAuthHeaders(),
-            timeout: 60000 // 60 saniye timeout
+            signal: controller.signal
         })
-        return response.data
+
+        clearTimeout(timeoutId)
+
+        const data = await response.json().catch(() => ({ success: false, error: 'Veritabanı bağlantı hatası' }))
+        return data
     } catch (error) {
         console.error('Get Batch Details Error:', error)
-        const errorMsg = error.response?.data?.error || error.message || 'Veritabanı bağlantı hatası'
+        const errorMsg = error.message || 'Veritabanı bağlantı hatası'
         return { success: false, error: errorMsg }
     }
 }
@@ -127,10 +146,14 @@ export const updateBatchStats = async (batchId) => {
             ? `${apiBase}/${EDGE_FUNCTIONS.UPDATE_BATCH_STATS}`
             : `${apiBase}/update-batch-stats`
         
-        const response = await axios.post(url, { batchId }, {
-            headers: getAuthHeaders()
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ batchId })
         })
-        return response.data
+
+        const data = await response.json().catch(() => ({ success: false, error: error.message }))
+        return data
     } catch (error) {
         console.error('Update Batch Stats Error:', error)
         return { success: false, error: error.message }
@@ -148,15 +171,19 @@ export const updateProductStatus = async (sku, ideasoftId, status, error = null)
             ? `${apiBase}/${EDGE_FUNCTIONS.UPDATE_STATUS}`
             : `${apiBase}/update-status`
         
-        const response = await axios.post(url, {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
             sku,
             ideasoftId,
             status,
             error
-        }, {
-            headers: getAuthHeaders()
         })
-        return response.data
+        })
+
+        const data = await response.json().catch(() => ({ success: false, error: error.message }))
+        return data
     } catch (error) {
         console.error('Status Update Error:', error)
         return { success: false, error: error.message }
@@ -174,14 +201,18 @@ export const updateProductCategory = async (sku, categoryId, categoryName) => {
             ? `${apiBase}/${EDGE_FUNCTIONS.UPDATE_CATEGORY}`
             : `${apiBase}/update-category`
         
-        const response = await axios.post(url, {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
             sku,
             categoryId,
             categoryName
-        }, {
-            headers: getAuthHeaders()
         })
-        return response.data
+        })
+
+        const data = await response.json().catch(() => ({ success: false, error: error.message }))
+        return data
     } catch (error) {
         console.error('Category Update Error:', error)
         return { success: false, error: error.message }
@@ -196,12 +227,37 @@ export const updateImportedProduct = async (id, patch) => {
             ? `${apiBase}/${EDGE_FUNCTIONS.UPDATE_PRODUCT}/${id}`
             : `${apiBase}/imported-products/${id}`
         
-        const response = await axios.patch(url, patch, {
-            headers: getAuthHeaders()
+        const response = await fetch(url, {
+            method: 'PATCH',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(patch)
         })
-        return response.data
+
+        const data = await response.json().catch(() => ({ success: false, error: 'Network error' }))
+        return data
     } catch (error) {
         console.error('Update Imported Product Error:', error)
-        return { success: false, error: error.response?.data?.error || error.message }
+        return { success: false, error: error.message }
+    }
+}
+
+export const updateImportedProductsBatch = async (updates) => {
+    try {
+        const apiBase = getApiBase()
+        const url = apiBase.includes('functions/v1')
+            ? `${apiBase}/${EDGE_FUNCTIONS.UPDATE_PRODUCTS_BATCH}`
+            : `${apiBase}/imported-products/batch`
+        
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ updates })
+        })
+
+        const data = await response.json().catch(() => ({ success: false, error: 'Network error' }))
+        return data
+    } catch (error) {
+        console.error('Update Imported Products Batch Error:', error)
+        return { success: false, error: error.message }
     }
 }

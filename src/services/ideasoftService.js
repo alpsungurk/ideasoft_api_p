@@ -1,8 +1,51 @@
-import axios from 'axios'
 import { normalizeErrorMessage } from '../utils/errorHandler'
 
 // Ideasoft API base URL - OAuth2 token ile kullanılır
 const IDEASOFT_API_BASE = 'https://api.ideasoft.com.tr/api/v1'
+
+// Supabase Edge Functions URL'i veya local proxy
+const getIdeasoftApiBase = () => {
+  // Supabase Edge Functions kullan (hem local hem production)
+  if (import.meta.env.VITE_SUPABASE_URL) {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL.replace(/\/$/, '')
+    return `${supabaseUrl}/functions/v1`
+  }
+  
+  // Production'da VITE_SUPABASE_URL zorunlu
+  if (import.meta.env.MODE === 'production' || import.meta.env.PROD) {
+    console.error('❌ VITE_SUPABASE_URL environment variable is missing in production!')
+    throw new Error('Supabase configuration missing. Please set VITE_SUPABASE_URL in Vercel environment variables.')
+  }
+  
+  // Fallback: Local development'da server.js proxy kullan
+  return '/api'
+}
+
+// Edge Function isimleri
+const IDEASOFT_EDGE_FUNCTIONS = {
+  EXCHANGE_TOKEN: 'ideasoft-exchange-token',
+  CATEGORIES: 'ideasoft-categories',
+  PRODUCTS: 'ideasoft-products',
+  PRODUCT_TO_CATEGORIES: 'ideasoft-product-to-categories',
+  PRODUCT_DETAILS: 'ideasoft-product-details',
+  PRODUCT_IMAGES: 'ideasoft-product-images',
+  SCRAPE: 'scrape',
+  GEMINI_GENERATE: 'gemini-generate-description',
+  GEMINI_VALIDATE: 'gemini-validate-key'
+}
+
+// Authorization header (anon key)
+const getAuthHeaders = () => {
+  const headers = { 'Content-Type': 'application/json' }
+  
+  // Supabase anon key kullan (hem local hem production)
+  if (import.meta.env.VITE_SUPABASE_ANON_KEY) {
+    headers['Authorization'] = `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+    headers['apikey'] = import.meta.env.VITE_SUPABASE_ANON_KEY
+  }
+  
+  return headers
+}
 
 /**
  * Ürün-kategori ilişkisini oluştur
@@ -16,105 +59,90 @@ const IDEASOFT_API_BASE = 'https://api.ideasoft.com.tr/api/v1'
  */
 export const createProductCategory = async (productId, categoryId, accessToken, shopId, productData) => {
   try {
-    // Backend API endpoint kullan (CORS sorununu çözmek için)
-    const apiUrl = '/api/product-to-categories'
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCT_TO_CATEGORIES}`
 
-    const response = await axios.post(
-      apiUrl,
-      {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         shopId,
         accessToken,
         productId,
         categoryId,
         productData
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.success) {
-      return { success: true, data: response.data.data }
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      return { success: true, data: data.data }
     } else {
-      throw new Error(response.data?.error || 'Kategori ilişkisi oluşturulamadı')
+      throw new Error(data?.error || 'Kategori ilişkisi oluşturulamadı')
     }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Kategori ilişkisi oluşturulamadı'
+    const errorMessage = error.message || 'Kategori ilişkisi oluşturulamadı'
     return {
       success: false,
       error: normalizeErrorMessage(errorMessage),
-      statusCode: error.response?.status
+      statusCode: error.status
     }
   }
 }
 
 export const postProductImage = async ({ shopId, accessToken, localProductId, imageUrl, ideasoftProductId }) => {
   try {
-    const response = await axios.post(
-      '/api/product-images',
-      {
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCT_IMAGES}`
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         shopId,
         accessToken,
         localProductId,
         imageUrl,
         ideasoftProductId
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.success) {
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
       return { 
         success: true, 
-        data: response.data.data,
-        duplicate: response.data.duplicate || false
+        data: data.data,
+        duplicate: data.duplicate || false
       }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'ProductImages gönderilemedi') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'ProductImages gönderilemedi') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'ProductImages gönderilemedi'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'ProductImages gönderilemedi'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
 export const findIdeasoftProductBySku = async ({ shopId, accessToken, sku }) => {
   try {
-    const response = await axios.post(
-      '/api/ideasoft/find-product-by-sku',
-      { shopId, accessToken, sku },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+    const response = await fetch('/api/ideasoft/find-product-by-sku', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ shopId, accessToken, sku })
+    })
 
-    if (response.data && response.data.success) {
-      return { success: true, data: response.data.data }
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      return { success: true, data: data.data }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün bulunamadı') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'Ürün bulunamadı') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Ürün bulunamadı'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'Ürün bulunamadı'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
@@ -143,29 +171,26 @@ export const createIdeasoftProduct = async (product, accessToken, shopId) => {
     }
 
     // 1. Önce ürünü oluştur (kategori bilgisi olmadan)
-    // Backend API endpoint kullan (CORS sorununu çözmek için)
-    const apiUrl = '/api/products'
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCTS}`
 
-    const response = await axios.post(
-      apiUrl,
-      {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         shopId,
         accessToken,
         product: ideasoftProduct
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (!response.data || !response.data.success) {
-      throw new Error(response.data?.error || 'Ürün oluşturulamadı')
+    const responseData = await response.json().catch(() => ({}))
+
+    if (!responseData || !responseData.success) {
+      throw new Error(responseData?.error || 'Ürün oluşturulamadı')
     }
 
-    const createdProduct = response.data.data
+    const createdProduct = responseData.data
     const productId = createdProduct.id
 
     // 2. Eğer kategori varsa, kategori ilişkisini oluştur
@@ -199,15 +224,11 @@ export const createIdeasoftProduct = async (product, accessToken, shopId) => {
 
     return { success: true, data: createdProduct }
   } catch (error) {
-    const errorMessage = error.response?.data?.message ||
-      error.response?.data?.error ||
-      error.response?.data?.error_description ||
-      error.message ||
-      'Bilinmeyen bir hata oluştu'
+    const errorMessage = error.message || 'Bilinmeyen bir hata oluştu'
     return {
       success: false,
       error: normalizeErrorMessage(errorMessage),
-      statusCode: error.response?.status
+      statusCode: error.status
     }
   }
 }
@@ -259,83 +280,72 @@ export const postProductDetail = async ({ shopId, accessToken, localProductId, d
       return { success: false, error: normalizeErrorMessage('shopId ve accessToken gerekli') }
     }
 
-    const response = await axios.post(
-      '/api/product-details',
-      {
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCT_DETAILS}`
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         shopId,
         accessToken,
         localProductId: Number(localProductId), // Number'a çevir
         details: String(details || '').trim(),
         extraDetails: String(extraDetails || '').trim()
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.success) {
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
       return { 
         success: true, 
-        data: response.data.data,
-        duplicate: response.data.duplicate || false
+        data: data.data,
+        duplicate: data.duplicate || false
       }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'ProductDetail gönderilemedi') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'ProductDetail gönderilemedi') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'ProductDetail gönderilemedi'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'ProductDetail gönderilemedi'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
 export const getIdeasoftProductsBatch = async ({ shopId, accessToken, productIds }) => {
   try {
-    const response = await axios.post(
-      '/api/ideasoft/get-products-batch',
-      { shopId, accessToken, productIds },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+    const response = await fetch('/api/ideasoft/get-products-batch', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ shopId, accessToken, productIds })
+    })
 
-    if (response.data && response.data.success) {
-      return { success: true, data: response.data.data }
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      return { success: true, data: data.data }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Toplu ürün çekilemedi') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'Toplu ürün çekilemedi') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error || error.response?.data?.message || error.message || 'Toplu ürün çekilemedi'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'Toplu ürün çekilemedi'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
-
-
 
 export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, productData }) => {
   try {
     const { categoryId, ...rest } = productData || {}
-    const response = await axios.put(
-      `/api/ideasoft/products/${productId}`,
-      { shopId, accessToken, productData: rest },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+    const response = await fetch(`/api/ideasoft/products/${productId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ shopId, accessToken, productData: rest })
+    })
 
-    if (response.data && response.data.success) {
-      const updated = response.data.data
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      const updated = data.data
       if (categoryId) {
         const catRes = await createProductCategory(
           Number(productId),
@@ -351,41 +361,31 @@ export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, pr
       return { success: true, data: updated }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün güncellenemedi') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'Ürün güncellenemedi') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Ürün güncellenemedi'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'Ürün güncellenemedi'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
-
 export const getIdeasoftProduct = async ({ shopId, accessToken, productId }) => {
   try {
-    const response = await axios.post(
-      '/api/ideasoft/get-product',
-      { shopId, accessToken, productId },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+    const response = await fetch('/api/ideasoft/get-product', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ shopId, accessToken, productId })
+    })
 
-    if (response.data && response.data.success) {
-      return { success: true, data: response.data.data }
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      return { success: true, data: data.data }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Ürün alınamadı') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'Ürün alınamadı') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Ürün alınamadı'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'Ürün alınamadı'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
@@ -398,32 +398,28 @@ export const getIdeasoftProduct = async ({ shopId, accessToken, productId }) => 
 export const getAccessToken = async (clientId, clientSecret) => {
   try {
     // Ideasoft API'ye doğrudan istek at
-    const response = await axios.post(
-      'https://api.ideasoft.com.tr/oauth/token',
-      {
+    const response = await fetch('https://api.ideasoft.com.tr/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
         grant_type: 'client_credentials',
         client_id: clientId,
         client_secret: clientSecret
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.access_token) {
-      return response.data.access_token
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.access_token) {
+      return data.access_token
     } else {
       throw new Error('Token alınamadı: Geçersiz yanıt')
     }
   } catch (error) {
-    const errorMessage = error.response?.data?.error_description ||
-      error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Token alınamadı'
+    const errorMessage = error.message || 'Token alınamadı'
     throw new Error(errorMessage)
   }
 }
@@ -465,55 +461,52 @@ export const initiateOAuth2Flow = (shopId, clientId, redirectUri) => {
  */
 export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret, redirectUri) => {
   try {
-    // Backend API endpoint kullan (CORS sorununu çözmek için)
-    // Vite proxy ile development server'a yönlendirilir
-    const apiUrl = '/api/exchange-token'
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.EXCHANGE_TOKEN}`
 
-    const response = await axios.post(
-      apiUrl,
-      {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000)
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         code,
         shopId,
         clientId,
         clientSecret,
         redirectUri
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        timeout: 15000
-      }
-    )
+      }),
+      signal: controller.signal
+    })
 
-    if (response.data && response.data.success && response.data.access_token) {
+    clearTimeout(timeoutId)
+
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success && data.access_token) {
       // Token'ı localStorage'a kaydet
       const tokenData = {
-        access_token: response.data.access_token,
-        refresh_token: response.data.refresh_token,
-        expires_in: response.data.expires_in,
-        token_type: response.data.token_type,
-        expires_at: Date.now() + (response.data.expires_in * 1000),
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_in: data.expires_in,
+        token_type: data.token_type,
+        expires_at: Date.now() + (data.expires_in * 1000),
         shopId: shopId
       }
       localStorage.setItem('ideasoft_token', JSON.stringify(tokenData))
 
       return tokenData
     } else {
-      const errorMsg = response.data?.error || 'Token alınamadı: Geçersiz yanıt'
+      const errorMsg = data?.error || 'Token alınamadı: Geçersiz yanıt'
       throw new Error(String(errorMsg))
     }
   } catch (error) {
     let errorMessage = 'Token alınamadı'
     
-    if (error.response) {
-      errorMessage = error.response.data?.error ||
-        error.response.data?.error_description ||
-        error.response.data?.message ||
-      error.message ||
-      'Token alınamadı'
-    } else if (error.request) {
+    if (error.name === 'AbortError') {
+      errorMessage = 'İstek zaman aşımına uğradı. Lütfen tekrar deneyin.'
+    } else if (!error.message || error.message === 'Token alınamadı') {
       errorMessage = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.'
     } else {
       errorMessage = error.message || 'Bilinmeyen hata oluştu'
@@ -533,29 +526,29 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
  */
 export const refreshAccessToken = async (shopId, clientId, clientSecret, refreshToken) => {
   try {
-    const response = await axios.post(
-      `https://${shopId}.myideasoft.com/oauth/v2/token`,
-      {
+    const response = await fetch(`https://${shopId}.myideasoft.com/oauth/v2/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
         grant_type: 'refresh_token',
         client_id: clientId,
         client_secret: clientSecret,
         refresh_token: refreshToken
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.access_token) {
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.access_token) {
       const tokenData = {
-        access_token: response.data.access_token,
-        refresh_token: response.data.refresh_token,
-        expires_in: response.data.expires_in,
-        token_type: response.data.token_type,
-        expires_at: Date.now() + (response.data.expires_in * 1000),
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_in: data.expires_in,
+        token_type: data.token_type,
+        expires_at: Date.now() + (data.expires_in * 1000),
         shopId: shopId
       }
       localStorage.setItem('ideasoft_token', JSON.stringify(tokenData))
@@ -564,11 +557,7 @@ export const refreshAccessToken = async (shopId, clientId, clientSecret, refresh
       throw new Error('Token yenilenemedi: Geçersiz yanıt')
     }
   } catch (error) {
-    const errorMessage = error.response?.data?.error_description ||
-      error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Token yenilenemedi'
+    const errorMessage = error.message || 'Token yenilenemedi'
     throw new Error(errorMessage)
   }
 }
@@ -604,42 +593,34 @@ export const getStoredToken = () => {
  */
 export const getCategories = async (accessToken, shopId) => {
   try {
-    // Backend API endpoint kullan (CORS sorununu çözmek için)
-    const apiUrl = '/api/categories'
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.CATEGORIES}?shopId=${encodeURIComponent(shopId)}&accessToken=${encodeURIComponent(accessToken)}`
 
-    const response = await axios.get(apiUrl, {
-      params: {
-        shopId,
-        accessToken
-      },
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: getAuthHeaders()
     })
 
-    if (response.data && response.data.success) {
-      const categoriesList = response.data.data || []
+    const data = await response.json().catch(() => ({}))
 
+    if (data && data.success) {
+      const categoriesList = data.data || []
 
       return {
         success: true,
         data: categoriesList,
-        total: response.data.total || categoriesList.length,
-        active: response.data.active || categoriesList.length
+        total: data.total || categoriesList.length,
+        active: data.active || categoriesList.length
       }
     } else {
-      throw new Error(response.data?.error || 'Kategoriler alınamadı')
+      throw new Error(data?.error || 'Kategoriler alınamadı')
     }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Kategoriler alınamadı'
+    const errorMessage = error.message || 'Kategoriler alınamadı'
     return {
       success: false,
       error: errorMessage,
-      statusCode: error.response?.status,
+      statusCode: error.status,
       data: []
     }
   }
@@ -655,69 +636,54 @@ export const getCategories = async (accessToken, shopId) => {
  */
 export const recreateDeletedProduct = async (product, accessToken, shopId) => {
   try {
-    const response = await axios.post(
-      '/api/recreate-deleted-product',
-      {
+    const response = await fetch('/api/recreate-deleted-product', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
         shopId,
         accessToken,
         product
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    )
+      })
+    })
 
-    if (response.data && response.data.success) {
-      return { success: true, data: response.data.data }
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      return { success: true, data: data.data }
     }
 
-    return { success: false, error: normalizeErrorMessage(response.data?.error || 'Silinmiş ürün yeniden oluşturulamadı') }
+    return { success: false, error: normalizeErrorMessage(data?.error || 'Silinmiş ürün yeniden oluşturulamadı') }
   } catch (error) {
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Silinmiş ürün yeniden oluşturulamadı'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.response?.status }
+    const errorMessage = error.message || 'Silinmiş ürün yeniden oluşturulamadı'
+    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
   }
 }
 
 export const getCategory = async (accessToken, shopId, categoryId) => {
   try {
-    // Backend API endpoint kullan (CORS sorununu çözmek için)
-    const apiUrl = '/api/categories'
+    const apiBase = getIdeasoftApiBase()
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.CATEGORIES}?shopId=${encodeURIComponent(shopId)}&accessToken=${encodeURIComponent(accessToken)}&categoryId=${encodeURIComponent(categoryId)}`
 
-    const response = await axios.get(apiUrl, {
-      params: {
-        shopId,
-        accessToken,
-        categoryId
-      },
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: getAuthHeaders()
     })
 
-    if (response.data && response.data.success) {
-      const category = response.data.data
+    const data = await response.json().catch(() => ({}))
+
+    if (data && data.success) {
+      const category = data.data
       return { success: true, data: category }
     } else {
-      throw new Error(response.data?.error || 'Kategori alınamadı')
+      throw new Error(data?.error || 'Kategori alınamadı')
     }
   } catch (error) {
     console.error('Category API Error:', error)
-    const errorMessage = error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      'Kategori alınamadı'
+    const errorMessage = error.message || 'Kategori alınamadı'
     return {
       success: false,
       error: errorMessage,
-      statusCode: error.response?.status
+      statusCode: error.status
     }
   }
 }
-

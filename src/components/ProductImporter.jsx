@@ -44,11 +44,13 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
     }, [appConfig]);
 
     useEffect(() => {
-        if (step === 3 && products.length > 0 && config.shopId) {
+        // Kategorileri sayfa yüklendiğinde yükle (step 3'e geçmeden önce)
+        const storedToken = getStoredToken();
+        if (storedToken?.access_token && config.shopId) {
             loadCategories();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [step, products.length, config.shopId]);
+    }, [config.shopId]);
 
     useEffect(() => {
         if (onStepChange) {
@@ -88,8 +90,8 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             const result = await getCategories(storedToken.access_token, config.shopId);
             if (result.success) setCategories(result.data);
         } catch (error) {
+            console.error('Kategori yükleme hatası:', error);
         } finally {
-            setLoadingCategories(true);
             setLoadingCategories(false);
         }
     };
@@ -160,12 +162,22 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
         }
         
         try {
+            // Supabase Edge Function URL'i
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || ''
+            const apiBase = supabaseUrl ? `${supabaseUrl}/functions/v1` : '/api'
+            const apiUrl = `${apiBase}/gemini-validate-key`
+            
+            // Authorization headers
+            const headers = { 'Content-Type': 'application/json' }
+            if (import.meta.env.VITE_SUPABASE_ANON_KEY) {
+                headers['Authorization'] = `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+                headers['apikey'] = import.meta.env.VITE_SUPABASE_ANON_KEY
+            }
+            
             // Test isteği gönder
-            const response = await fetch('/api/validate-gemini-key', {
+            const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers,
                 body: JSON.stringify({ geminiApiKey: key.trim() })
             });
             
@@ -244,11 +256,21 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                 
                 setProgress({ current: i + 1, total: products.length, message: `${i + 1}/${products.length} ürün açıklaması oluşturuluyor... (${product.name || product.sku || 'Ürün ' + i})` });
                 
-                const response = await fetch('/api/generate-product-description', {
+                // Supabase Edge Function URL'i
+                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || ''
+                const apiBase = supabaseUrl ? `${supabaseUrl}/functions/v1` : '/api'
+                const apiUrl = `${apiBase}/gemini-generate-description`
+                
+                // Authorization headers
+                const headers = { 'Content-Type': 'application/json' }
+                if (import.meta.env.VITE_SUPABASE_ANON_KEY) {
+                    headers['Authorization'] = `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+                    headers['apikey'] = import.meta.env.VITE_SUPABASE_ANON_KEY
+                }
+                
+                const response = await fetch(apiUrl, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers,
                     body: JSON.stringify({
                         productName: product.name || product.sku || 'Ürün',
                         brand: product.brand || '',
@@ -390,21 +412,35 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                 if (!prog.success && prog.error) {
                     const currentProd = products[prog.current - 1];
                     const productName = currentProd?.name || currentProd?.sku || `Ürün #${prog.current}`;
-                    const errorMsg = normalizeErrorMessage(prog.error);
+                    let errorMsg = normalizeErrorMessage(prog.error);
                     
-                    if (isDuplicateError(prog.error) || isDuplicateError(errorMsg)) {
-                        failedProducts.push({
-                            name: productName,
-                            sku: currentProd?.sku || '',
-                            error: 'Aynı üründen var'
-                        });
-                    } else {
-                        failedProducts.push({
-                            name: productName,
-                            sku: currentProd?.sku || '',
-                            error: errorMsg
-                        });
+                    // Duplicate hatasını kontrol et (daha geniş kontrol)
+                    const errorLower = String(prog.error || '').toLowerCase();
+                    const normalizedLower = errorMsg.toLowerCase();
+                    
+                    if (
+                        isDuplicateError(prog.error) || 
+                        isDuplicateError(errorMsg) ||
+                        errorLower.includes('aynı üründen var') ||
+                        errorLower.includes('aynı sku') ||
+                        errorLower.includes('aynı ürün') ||
+                        errorLower.includes('duplicate') ||
+                        errorLower.includes('already exists') ||
+                        errorLower.includes('zaten var') ||
+                        normalizedLower.includes('aynı üründen var') ||
+                        normalizedLower.includes('aynı sku') ||
+                        normalizedLower.includes('aynı ürün') ||
+                        (prog.statusCode === 400 && (errorLower.includes('invalid') || errorLower.includes('bad request')))
+                    ) {
+                        // 400 hatası ve duplicate benzeri mesaj ise "Aynı üründen var" olarak işaretle
+                        errorMsg = 'Aynı üründen var';
                     }
+                    
+                    failedProducts.push({
+                        name: productName,
+                        sku: currentProd?.sku || '',
+                        error: errorMsg
+                    });
                 }
             });
             if (batchId) await updateBatchStats(batchId);
@@ -424,7 +460,7 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                 
                 if (duplicateProducts.length > 0) {
                     const productList = duplicateProducts.map(p => `- ${p.name}${p.sku ? ` (SKU: ${p.sku})` : ''}`).join('\n');
-                    modalMessage += `Aynı üründen var:\n${productList}`;
+                    modalMessage += `Aynı üründen var (SKU veya ürün adı Ideasoft'ta zaten mevcut):\n${productList}`;
                 }
                 
                 // Diğer hatalar varsa onları da göster
@@ -656,6 +692,14 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
 
     return (
         <div className="product-importer">
+            {loadingCategories && (
+                <div className="progress-overlay">
+                    <div className="progress-card">
+                        <div className="spinner" style={{ margin: '0 auto 16px', width: '40px', height: '40px' }}></div>
+                        <h3>Kategoriler yükleniyor...</h3>
+                    </div>
+                </div>
+            )}
             {loading && progress && (
                 <div className="progress-overlay">
                     <div className="progress-card">

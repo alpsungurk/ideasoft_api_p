@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getBatchDetails, updateImportedProduct, updateProductStatus, updateBatchStats } from '../services/databaseService';
+import { getBatchDetails, updateImportedProduct, updateImportedProductsBatch, updateProductStatus, updateBatchStats } from '../services/databaseService';
 import { getIdeasoftProductsBatch, updateIdeasoftProduct, getCategories, getStoredToken, recreateDeletedProduct, postProductDetail, postProductImage, getIdeasoftProduct } from '../services/ideasoftService';
 import { normalizeErrorMessage, isDuplicateError } from '../utils/errorHandler';
 import './ProjectDetail.css';
@@ -69,12 +69,22 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
 
   const load = async (preserveOrder = false) => {
     setLoading(true);
+    setLoadingCategories(true);
     setError(null);
     try {
-      const result = await getBatchDetails(projectId);
-      if (!result?.success) throw new Error(result?.error || 'Proje detayı alınamadı');
-      setBatch(result.data);
-      const newProducts = (result.data?.products || []).map(p => ({
+      const accessToken = appConfig?.apiKey;
+      const shopId = appConfig?.shopId;
+      
+      // Kategorileri ve batch detaylarını paralel olarak yükle
+      const [batchResult, categoriesResult] = await Promise.all([
+        getBatchDetails(projectId),
+        (accessToken && shopId) ? getCategories(accessToken, shopId) : Promise.resolve({ success: false, data: [] })
+      ]);
+      
+      // Batch detaylarını işle
+      if (!batchResult?.success) throw new Error(batchResult?.error || 'Proje detayı alınamadı');
+      setBatch(batchResult.data);
+      const newProducts = (batchResult.data?.products || []).map(p => ({
         ...p,
         categoryId:
           p.categoryId ??
@@ -116,8 +126,13 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       setProducts(initialProducts);
       setSelectedProducts(new Set()); // Seçimleri temizle
 
-      const accessToken = appConfig?.apiKey;
-      const shopId = appConfig?.shopId;
+      // Kategorileri işle
+      if (categoriesResult?.success) {
+        setCategories(categoriesResult.data);
+      }
+      setLoadingCategories(false);
+
+      // Remote ürün bilgilerini çek
       const ids = initialProducts.map(p => p.ideasoft_product_id).filter(Boolean);
       if (accessToken && shopId && ids.length > 0) {
         setPullingId('all');
@@ -136,13 +151,9 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         }
         setPullingId(null);
       }
-      
-      // Load categories
-      if (accessToken && shopId) {
-        await loadCategories(accessToken, shopId);
-      }
     } catch (e) {
       setError(e.message);
+      setLoadingCategories(false);
     } finally {
       setLoading(false);
     }
@@ -291,12 +302,12 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       setProducts(prev => prev.map(p =>
         p.id === row.id
           ? {
-              ...p,
-              ...payload,
-              stock_amount: payload.stockAmount,
-              image_url: payload.imageUrl,
-              _dirty: false
-            }
+            ...p,
+            ...payload,
+            stock_amount: payload.stockAmount,
+            image_url: payload.imageUrl,
+            _dirty: false
+          }
           : p
       ));
       
@@ -325,24 +336,23 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
     }
   
     setBulkSaving(true);
-    let successCount = 0;
-    for (const p of dirtyProducts) {
-      try {
-        const payload = {
-          name: p.name ?? '',
-          sku: p.sku ?? '',
-          price: Number(p.price) || 0,
-          stockAmount: Number(p.stock_amount) || 0,
-          description: p.description ?? '',
-          imageUrl: p.image_url ?? '',
-          status: Number(p.status) ? 1 : 0,
-          categoryId: p.categoryId
-        };
-        await updateImportedProduct(p.id, payload);
-        successCount++; 
-      } catch (e) {
-      }
-    }
+    
+    // Batch update için updates array'i oluştur
+    const updates = dirtyProducts.map(p => ({
+      id: p.id,
+      name: p.name ?? '',
+      sku: p.sku ?? '',
+      price: Number(p.price) || 0,
+      stockAmount: Number(p.stock_amount) || 0,
+      description: p.description ?? '',
+      imageUrl: p.image_url ?? '',
+      status: Number(p.status) ? 1 : 0,
+      categoryId: p.categoryId
+    }));
+
+    // Tek bir batch request ile tüm ürünleri güncelle
+    const result = await updateImportedProductsBatch(updates);
+    const successCount = result?.successCount || 0;
   
     // Refresh to sync everything - sıralamayı koru
     await load(true);
@@ -467,11 +477,11 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
             if (isFailed && p.ideasoft_product_id) {
               // Başarısız olanlar için önce update dene
               result = await updateIdeasoftProduct({
-                shopId,
-                accessToken: apiKey,
-                productId: p.ideasoft_product_id,
-                productData
-              });
+              shopId,
+              accessToken: apiKey,
+              productId: p.ideasoft_product_id,
+              productData
+            });
               
               // Eğer update başarılı olduysa, detail ve image gönder ve durumu SUCCESS yap
               if (result?.success) {
@@ -651,26 +661,26 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
 
               if (String(p.description || '').trim()) {
                 try {
-                  await postProductDetail({
-                    shopId,
-                    accessToken: apiKey,
-                    localProductId: p.id,
-                    details: p.description || '',
-                    extraDetails: ''
-                  });
+                await postProductDetail({
+                  shopId,
+                  accessToken: apiKey,
+                  localProductId: p.id,
+                  details: p.description || '',
+                  extraDetails: ''
+                });
                 } catch (e) {
                   console.error('ProductDetail gönderme hatası:', e);
                 }
               }
               if (String(p.image_url || '').trim()) {
                 try {
-                  await postProductImage({
-                    shopId,
-                    accessToken: apiKey,
-                    localProductId: p.id,
-                    imageUrl: p.image_url,
-                    ideasoftProductId: p.ideasoft_product_id
-                  });
+                await postProductImage({
+                  shopId,
+                  accessToken: apiKey,
+                  localProductId: p.id,
+                  imageUrl: p.image_url,
+                  ideasoftProductId: p.ideasoft_product_id
+                });
                 } catch (e) {
                   console.error('ProductImage gönderme hatası:', e);
                 }
@@ -838,76 +848,89 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           return;
         }
 
-        for (const p of targetProducts) {
-          try {
-            // Ideasoft API'den tam ürün bilgisini çek
-            const productResult = await getIdeasoftProduct({
-              shopId,
-              accessToken,
-              productId: p.ideasoft_product_id
-            });
+        // Önce tüm ürünleri Ideasoft'tan paralel olarak çek
+        const productResults = await Promise.all(
+          targetProducts.map(async (p) => {
+            try {
+              const productResult = await getIdeasoftProduct({
+                shopId,
+                accessToken,
+                productId: p.ideasoft_product_id
+              });
 
-            if (!productResult?.success || !productResult?.data) {
-              errorCount++;
-              continue;
+              if (!productResult?.success || !productResult?.data) {
+                return { id: p.id, success: false };
+              }
+
+              const productData = productResult.data;
+              
+              // Ürün detaylarını çek (details, extraDetails)
+              let details = '';
+              let extraDetails = '';
+              if (productData.detail) {
+                details = String(productData.detail.details || '').trim();
+                extraDetails = String(productData.detail.extraDetails || '').trim();
+              }
+
+              // Resimleri çek (ilk resim)
+              let imageUrl = '';
+              if (productData.images && Array.isArray(productData.images) && productData.images.length > 0) {
+                const firstImage = productData.images[0];
+                imageUrl = String(firstImage.originalUrl || firstImage.thumbUrl || firstImage.filename || '').trim();
+              }
+
+              // Kategori bilgisini çek (ilk kategori)
+              let categoryId = null;
+              if (productData.categories && Array.isArray(productData.categories) && productData.categories.length > 0) {
+                categoryId = Number(productData.categories[0].id) || null;
+              }
+
+              // Fiyat bilgisini çek
+              const price = Number(productData.price1 || productData.price || 0);
+
+              // Stok bilgisini çek
+              const stockAmount = Number(productData.stockAmount || productData.stock || 0);
+
+              // Status bilgisini çek
+              const status = Number(productData.status) === 1 ? 1 : 0;
+
+              return {
+                id: p.id,
+                success: true,
+                payload: {
+                  name: String(productData.name || '').trim(),
+                  sku: String(productData.sku || '').trim(),
+                  price: price,
+                  stockAmount: stockAmount,
+                  description: details || extraDetails || '',
+                  imageUrl: imageUrl,
+                  status: status,
+                  categoryId: categoryId
+                }
+              };
+            } catch (e) {
+              return { id: p.id, success: false };
             }
+          })
+        );
 
-            const productData = productResult.data;
-            
-            // Ürün detaylarını çek (details, extraDetails)
-            let details = '';
-            let extraDetails = '';
-            if (productData.detail) {
-              details = String(productData.detail.details || '').trim();
-              extraDetails = String(productData.detail.extraDetails || '').trim();
-            }
+        // Başarılı olanları batch update ile güncelle
+        const updates = productResults
+          .filter(r => r.success)
+          .map(r => ({ id: r.id, ...r.payload }));
 
-            // Resimleri çek (ilk resim)
-            let imageUrl = '';
-            if (productData.images && Array.isArray(productData.images) && productData.images.length > 0) {
-              const firstImage = productData.images[0];
-              imageUrl = String(firstImage.originalUrl || firstImage.thumbUrl || firstImage.filename || '').trim();
-            }
-
-            // Kategori bilgisini çek (ilk kategori)
-            let categoryId = null;
-            if (productData.categories && Array.isArray(productData.categories) && productData.categories.length > 0) {
-              categoryId = Number(productData.categories[0].id) || null;
-            }
-
-            // Fiyat bilgisini çek
-            const price = Number(productData.price1 || productData.price || 0);
-
-            // Stok bilgisini çek
-            const stockAmount = Number(productData.stockAmount || productData.stock || 0);
-
-            // Status bilgisini çek
-            const status = Number(productData.status) === 1 ? 1 : 0;
-
-            // Tüm verileri payload'a ekle
-            const payload = {
-              name: String(productData.name || '').trim(),
-              sku: String(productData.sku || '').trim(),
-              price: price,
-              stockAmount: stockAmount,
-              description: details || extraDetails || '',
-              imageUrl: imageUrl,
-              status: status,
-              categoryId: categoryId
-            };
-
-            await updateImportedProduct(p.id, payload);
-            successCount++;
-          } catch (e) {
-            errorCount++;
-          }
+        if (updates.length > 0) {
+          const batchResult = await updateImportedProductsBatch(updates);
+          successCount = batchResult?.successCount || 0;
         }
+        
+        errorCount = productResults.filter(r => !r.success).length;
 
         await load(true);
         if (errorCount > 0) {
           showNotification(`${successCount} ürün başarıyla çekildi, ${errorCount} ürün çekilemedi.`, 'warning');
         } else {
-          showNotification(`${successCount} ürün Ideasoft verileriyle senkronize edildi (DB güncellendi).`, 'success');
+        showNotification(`${successCount} ürün Ideasoft verileriyle senkronize edildi (DB güncellendi).`, 'success');
         }
         setBulkPulling(false);
       }
@@ -958,16 +981,16 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
 
         // Product Detail ve Image gönderimini bağımsız olarak dene (birisi başarısız olsa bile diğeri denensin)
         const errors = [];
-        
+
         if (String(row.description || '').trim()) {
           try {
-            const dRes = await postProductDetail({
-              shopId,
-              accessToken: apiKey,
-              localProductId: row.id,
-              details: row.description || '',
-              extraDetails: ''
-            });
+          const dRes = await postProductDetail({
+            shopId,
+            accessToken: apiKey,
+            localProductId: row.id,
+            details: row.description || '',
+            extraDetails: ''
+          });
             if (!dRes?.success) {
               const errorMsg = normalizeErrorMessage(dRes?.error || 'Gönderilemedi')
               errors.push(`Açıklama: ${errorMsg}`);
@@ -984,18 +1007,18 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           } catch (e) {
             const errorMsg = normalizeErrorMessage(e.message || 'Gönderilemedi')
             errors.push(`Açıklama: ${errorMsg}`);
-          }
+        }
         }
         
         if (String(row.image_url || '').trim()) {
           try {
-            const iRes = await postProductImage({
-              shopId,
-              accessToken: apiKey,
-              localProductId: row.id,
-              imageUrl: row.image_url,
-              ideasoftProductId: row.ideasoft_product_id
-            });
+          const iRes = await postProductImage({
+            shopId,
+            accessToken: apiKey,
+            localProductId: row.id,
+            imageUrl: row.image_url,
+            ideasoftProductId: row.ideasoft_product_id
+          });
             if (!iRes?.success) {
               const errorMsg = normalizeErrorMessage(iRes?.error || 'Gönderilemedi')
               errors.push(`Resim: ${errorMsg}`);
@@ -1299,18 +1322,18 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           <div className="confirm-actions">
             {confirmState.onConfirm ? (
               <>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmState({ open: false, title: '', message: '', onConfirm: null })}
-                >
+            <button
+              className="btn btn-secondary"
+              onClick={() => setConfirmState({ open: false, title: '', message: '', onConfirm: null })}
+            >
                   İptal
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => confirmState.onConfirm && confirmState.onConfirm()}
-                >
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => confirmState.onConfirm && confirmState.onConfirm()}
+            >
                   Onayla
-                </button>
+            </button>
               </>
             ) : (
               <button
@@ -1365,7 +1388,11 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       {loading && !batch ? (
         <div className="loading-state">
           <div className="spinner"></div>
-          <p>Proje detayları çekiliyor...</p>
+          <p>
+            {loadingCategories 
+              ? 'Proje detayları ve kategoriler yükleniyor...' 
+              : 'Proje detayları çekiliyor...'}
+          </p>
         </div>
       ) : error ? (
         <div className="error-state">

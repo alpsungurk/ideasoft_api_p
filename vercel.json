@@ -14,22 +14,6 @@
       "destination": "/index.html"
     }
   ],
-  "functions": {
-    "api/scrape.js": {
-      "maxDuration": 30
-    },
-    "api/exchange-token.js": {
-      "maxDuration": 10
-    },
-    "api/categories.js": {
-      "maxDuration": 10
-    },
-    "api/products.js": {
-      "maxDuration": 10
-    },
-    "api/product-to-categories.js": {
-      "maxDuration": 10
-    }
-  }
+  "functions": {}
 }
 

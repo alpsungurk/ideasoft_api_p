@@ -224,3 +224,4 @@ sudo lsof -i :3001
 - PM2 uygulamayı otomatik olarak yeniden başlatır (crash durumunda)
 - Nginx reverse proxy olarak çalışır ve SSL desteği sağlar
 
+

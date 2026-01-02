@@ -129,6 +129,12 @@ Supabase Dashboard > Project Settings > Edge Functions > Secrets'den şu environ
    - **Name:** `SUPABASE_SERVICE_ROLE_KEY`
      **Value:** (Supabase Dashboard > Settings > API > service_role key - gizli tutulmalı!)
 
+   - **Name:** `GOOGLE_API_KEY`
+     **Value:** `AIzaSyC741D2YUSfBMZmY_yrurbxeK_LVNc2TlA`
+
+   - **Name:** `GOOGLE_SEARCH_ENGINE_ID`
+     **Value:** `b1c94fd7831204066A`
+
 **Not:** Secret'lar eklendikten sonra function'ları yeniden deploy etmeniz gerekebilir.
 
 **Alternatif: CLI ile secret ekleme:**
@@ -136,6 +142,8 @@ Supabase Dashboard > Project Settings > Edge Functions > Secrets'den şu environ
 # Secret ekleme
 npx supabase@latest secrets set SUPABASE_URL=https://ljxbtkpognfqkdffecje.supabase.co
 npx supabase@latest secrets set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+npx supabase@latest secrets set GOOGLE_API_KEY=AIzaSyC741D2YUSfBMZmY_yrurbxeK_LVNc2TlA
+npx supabase@latest secrets set GOOGLE_SEARCH_ENGINE_ID=b1c94fd7831204066A
 
 # Secret'ları listeleme
 npx supabase@latest secrets list
