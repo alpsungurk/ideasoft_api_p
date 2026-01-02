@@ -43,7 +43,6 @@ export const getBatches = async () => {
  */
 export const getBatchDetails = async (id) => {
     try {
-        // Vercel'de dinamik route kullan
         const response = await axios.get(`${API_BASE}/batches/${id}`, {
             timeout: 60000 // 60 saniye timeout
         })
@@ -60,10 +59,7 @@ export const getBatchDetails = async (id) => {
  */
 export const updateBatchStats = async (batchId) => {
     try {
-        const response = await axios.post(`${API_BASE}/update`, { 
-            action: 'batch-stats',
-            batchId 
-        })
+        const response = await axios.post(`${API_BASE}/update-batch-stats`, { batchId })
         return response.data
     } catch (error) {
         console.error('Update Batch Stats Error:', error)
@@ -76,8 +72,7 @@ export const updateBatchStats = async (batchId) => {
  */
 export const updateProductStatus = async (sku, ideasoftId, status, error = null) => {
     try {
-        const response = await axios.post(`${API_BASE}/update`, {
-            action: 'status',
+        const response = await axios.post(`${API_BASE}/update-status`, {
             sku,
             ideasoftId,
             status,
@@ -95,8 +90,7 @@ export const updateProductStatus = async (sku, ideasoftId, status, error = null)
  */
 export const updateProductCategory = async (sku, categoryId, categoryName) => {
     try {
-        const response = await axios.post(`${API_BASE}/update`, {
-            action: 'category',
+        const response = await axios.post(`${API_BASE}/update-category`, {
             sku,
             categoryId,
             categoryName

@@ -188,13 +188,33 @@ git push
 - Render otomatik olarak PORT environment variable'ını ayarlar
 - `server.js` zaten `process.env.PORT` kullanıyor
 
-## 🎯 PlanetScale Kurulumu (Önerilen)
+## 🎯 Natro MySQL Bağlantı Ayarları
 
-1. [PlanetScale.com](https://planetscale.com) → Sign up
-2. **New database** → İsim verin
-3. **Connect** → Connection bilgilerini alın
-4. Render'a environment variables olarak ekleyin
-5. Database şeması otomatik oluşturulacak (`server.js` içinde)
+### Plesk Panel'de:
+
+1. **Databases** > **Remote MySQL**
+2. **Add Access Host** → Render'ın IP adresini ekleyin
+3. Veya **"Allow access from any host"** seçeneğini aktif edin (test için)
+
+### cPanel'de:
+
+1. **Remote MySQL** bölümüne gidin
+2. Render'ın IP adresini ekleyin
+3. Veya **"%"** ekleyerek tüm IP'lerden erişime izin verin (test için)
+
+### Render IP Adresini Öğrenme:
+
+- Render dashboard'da **Events** sekmesine bakın
+- Veya support'a sorun
+- Veya geçici olarak **"%"** kullanın (tüm IP'lerden erişim)
+
+### Database Şeması:
+
+Render deploy olduktan sonra, ilk API isteğinde `server.js` otomatik olarak tabloları oluşturacak:
+- `import_batches`
+- `imported_products`
+
+Manuel oluşturmak isterseniz, `database_schema.sql` dosyasını kullanabilirsiniz.
 
 ## ✅ Deployment Kontrolü
 
