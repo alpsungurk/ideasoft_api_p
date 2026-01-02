@@ -29,21 +29,6 @@
     },
     "api/product-to-categories.js": {
       "maxDuration": 10
-    },
-    "api/db/batches.js": {
-      "maxDuration": 30
-    },
-    "api/db/batches/[id].js": {
-      "maxDuration": 30
-    },
-    "api/db/create-batch.js": {
-      "maxDuration": 30
-    },
-    "api/db/imported-products/[id].js": {
-      "maxDuration": 30
-    },
-    "api/db/update.js": {
-      "maxDuration": 30
     }
   }
 }
