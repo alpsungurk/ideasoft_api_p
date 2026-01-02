@@ -18,9 +18,6 @@
     "api/scrape.js": {
       "maxDuration": 30
     },
-    "api/get-token.js": {
-      "maxDuration": 10
-    },
     "api/exchange-token.js": {
       "maxDuration": 10
     },
@@ -41,9 +38,6 @@
     },
     "api/db/create-batch.js": {
       "maxDuration": 30
-    },
-    "api/db/test-connection.js": {
-      "maxDuration": 10
     },
     "api/db/imported-products/[id].js": {
       "maxDuration": 30
