@@ -1,0 +1,58 @@
+# Supabase CLI Configuration
+# Bu dosya Supabase CLI'nin proje yapısını tanıması için gereklidir
+
+[project]
+# Proje referans ID'si (supabase link komutu ile otomatik doldurulur)
+# project_id = "your-project-ref"
+
+[api]
+# API ayarları
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+# Database ayarları
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+# Studio ayarları
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+# Inbucket (email testing) ayarları
+enabled = true
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[storage]
+# Storage ayarları
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+# Auth ayarları
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["https://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+# Email auth ayarları
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+[edge_runtime]
+# Edge Functions runtime ayarları
+# Supabase Cloud kullanıyorsanız port ayarı gerekmez
+enabled = true
+

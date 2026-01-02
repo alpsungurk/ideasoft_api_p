@@ -129,7 +129,7 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
             if (error.message === 'GOOGLE_QUOTA_EXCEEDED') {
                 showNotification('Search engine hakkınız doldu! Google API limitinizi kontrol edin.', 'error');
             } else {
-                showNotification('Resim toplama hatası: ' + error.message, 'error');
+            showNotification('Resim toplama hatası: ' + error.message, 'error');
             }
         } finally {
             setLoading(false);

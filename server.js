@@ -2,7 +2,7 @@
 import express from 'express'
 import cors from 'cors'
 import axios from 'axios'
-import mysql from 'mysql2/promise'
+import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
 
 dotenv.config()
@@ -316,17 +316,25 @@ app.post('/api/product-images', async (req, res) => {
     if (!imageUrl && !attachment) {
       return res.status(400).json({ success: false, error: 'imageUrl veya attachment (base64) gerekli' })
     }
-    if (!pool) {
-      return res.status(500).json({ success: false, error: 'Veritabanı bağlantısı yok' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
     }
 
     let resolvedIdeasoftProductId = ideasoftProductId
     if (!resolvedIdeasoftProductId && localProductId) {
-      const [rows] = await pool.query('SELECT * FROM imported_products WHERE id = ? LIMIT 1', [localProductId])
-      if (!rows || rows.length === 0) {
-        return res.status(404).json({ success: false, error: 'Ürün bulunamadı' })
+      const { data: rows, error: dbError } = await supabase
+        .from('imported_products')
+        .select('*')
+        .eq('id', localProductId)
+        .single()
+      
+      if (dbError) {
+        throw new Error(`Ürün bulunamadı: ${dbError.message}`)
       }
-      resolvedIdeasoftProductId = rows[0].ideasoft_product_id
+            if (!rows) {
+              return res.status(404).json({ success: false, error: 'Ürün bulunamadı' })
+            }
+      resolvedIdeasoftProductId = rows.ideasoft_product_id
     }
     if (!resolvedIdeasoftProductId) {
       return res.status(400).json({ success: false, error: 'ideasoftProductId gerekli (veya localProductId üzerinden DB\'de ideasoft_product_id olmalı)' })
@@ -451,9 +459,13 @@ app.post('/api/product-images', async (req, res) => {
         let productSku = '';
         try {
           if (localProductId) {
-            const [rows] = await pool.query('SELECT sku FROM imported_products WHERE id = ? LIMIT 1', [localProductId])
-            if (rows && rows.length > 0) {
-              productSku = rows[0].sku || '';
+            const { data: rows } = await supabase
+              .from('imported_products')
+              .select('sku')
+              .eq('id', localProductId)
+              .single()
+            if (rows) {
+              productSku = rows.sku || '';
             }
           }
         } catch (e) {
@@ -827,9 +839,15 @@ app.put('/api/ideasoft/products/:id', async (req, res) => {
 // Update imported product fields (Project detail edit)
 app.patch('/api/db/imported-products/:id', async (req, res) => {
   try {
-    if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
+    }
 
-    const id = req.params.id
+    const id = parseInt(req.params.id, 10)
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid product ID' })
+    }
+
     const {
       description,
       imageUrl,
@@ -843,63 +861,59 @@ app.patch('/api/db/imported-products/:id', async (req, res) => {
       ideasoftProductId
     } = req.body || {}
 
-    const fields = []
-    const values = []
+    const updateData = {}
 
     if (description !== undefined) {
-      fields.push('description = ?')
-      values.push(String(description))
+      updateData.description = String(description)
     }
 
     if (imageUrl !== undefined) {
-      fields.push('image_url = ?')
-      values.push(String(imageUrl))
+      updateData.image_url = String(imageUrl)
     }
 
     if (status !== undefined) {
-      fields.push('status = ?')
-      values.push(Number(status) === 1 ? 1 : 0)
+      updateData.status = Number(status) === 1 ? 1 : 0
     }
 
     if (name !== undefined) {
-      fields.push('name = ?')
-      values.push(String(name))
+      updateData.name = String(name)
     }
 
     if (sku !== undefined) {
-      fields.push('sku = ?')
-      values.push(String(sku))
+      updateData.sku = String(sku)
     }
 
     if (price !== undefined) {
-      fields.push('price = ?')
-      values.push(Number(price) || 0)
+      updateData.price = Number(price) || 0
     }
 
     if (stockAmount !== undefined) {
-      fields.push('stock_amount = ?')
-      values.push(Number(stockAmount) || 0)
+      updateData.stock_amount = Number(stockAmount) || 0
     }
 
     if (categoryId !== undefined) {
-      fields.push('selected_category_id = ?')
-      values.push(categoryId === null || categoryId === '' ? null : Number(categoryId))
+      updateData.selected_category_id = categoryId === null || categoryId === '' ? null : Number(categoryId)
     }
 
     const incomingIdeasoftId = ideasoft_product_id !== undefined ? ideasoft_product_id : ideasoftProductId
     if (incomingIdeasoftId !== undefined) {
-      fields.push('ideasoft_product_id = ?')
-      values.push(incomingIdeasoftId === null || incomingIdeasoftId === '' ? null : Number(incomingIdeasoftId))
+      updateData.ideasoft_product_id = incomingIdeasoftId === null || incomingIdeasoftId === '' ? null : Number(incomingIdeasoftId)
     }
 
-    if (fields.length === 0) {
+    if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ success: false, error: 'Güncellenecek alan yok' })
     }
 
-    values.push(id)
-    const query = `UPDATE imported_products SET ${fields.join(', ')} WHERE id = ?`
-    const [result] = await pool.query(query, values)
-    return res.json({ success: true, affected: result.affectedRows })
+    const { error } = await supabase
+      .from('imported_products')
+      .update(updateData)
+      .eq('id', id)
+
+    if (error) {
+      throw error
+    }
+
+    return res.json({ success: true })
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message })
   }
@@ -1352,9 +1366,9 @@ app.post('/api/product-details', async (req, res) => {
         body: Object.keys(req.body || {})
       })
     }
-    if (!pool) {
-      console.error('❌ ProductDetail: Veritabanı bağlantısı yok')
-      return res.status(500).json({ success: false, error: 'Veritabanı bağlantısı yok' })
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('❌ ProductDetail: Supabase bağlantısı yapılandırılmamış')
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
     }
 
     // localProductId'yi number'a çevir
@@ -1369,16 +1383,21 @@ app.post('/api/product-details', async (req, res) => {
       })
     }
 
-    const [rows] = await pool.query('SELECT * FROM imported_products WHERE id = ? LIMIT 1', [productId])
-    if (!rows || rows.length === 0) {
-      console.error('❌ ProductDetail: Ürün bulunamadı', { productId })
+    const { data: rows, error: dbError } = await supabase
+      .from('imported_products')
+      .select('*')
+      .eq('id', productId)
+      .single()
+    
+    if (dbError || !rows) {
+      console.error('❌ ProductDetail: Ürün bulunamadı', { productId, error: dbError?.message })
       return res.status(404).json({ 
         success: false, 
         error: `Ürün bulunamadı (ID: ${productId})` 
       })
     }
 
-    const p = rows[0]
+    const p = rows
     const ideasoftProductId = p.ideasoft_product_id
     if (!ideasoftProductId) {
       console.error('❌ ProductDetail: ideasoft_product_id yok', { productId, sku: p.sku })
@@ -1759,82 +1778,70 @@ app.post('/api/product-to-categories', async (req, res) => {
 })
 
 
-// Database configuration
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'ideasoft_api_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 0,
-  connectTimeout: 60000, // 60 saniye
-  acquireTimeout: 60000, // 60 saniye
-  timeout: 60000, // 60 saniye
-  reconnect: true
+// Supabase configuration
+const supabaseUrl = process.env.SUPABASE_URL
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('❌ Supabase URL ve Service Role Key gerekli!')
+  console.error('💡 Lütfen SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY environment variable\'larını ekleyin.')
+  console.error('💡 .env dosyasına şunları ekleyin:')
+  console.error('   SUPABASE_URL=https://your-project.supabase.co')
+  console.error('   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key')
 }
 
-let pool = null;
+// Service role key ile admin client (server-side için)
+// Eğer credentials yoksa, boş string ile client oluşturma (hata vermemesi için)
+let supabase = null
+if (supabaseUrl && supabaseServiceKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
+  } catch (err) {
+    console.error('❌ Supabase client oluşturulamadı:', err.message)
+    supabase = null
+  }
+} else {
+  console.warn('⚠️ Supabase client oluşturulamadı - credentials eksik')
+}
 
 async function initDb() {
   try {
-    pool = mysql.createPool(dbConfig)
-    const connection = await pool.getConnection()
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      console.error('❌ Supabase credentials eksik - initDb atlandı')
+      return
+    }
 
-    try {
-      console.log('✅ MySQL Database Connected Successfully to ' + dbConfig.host)
-
-      // Create tables if they don't exist
-      await connection.query(`
-        CREATE TABLE IF NOT EXISTS import_batches (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status VARCHAR(50) DEFAULT 'PROCESSING',
-            total_products INT DEFAULT 0,
-            successful_products INT DEFAULT 0,
-            failed_products INT DEFAULT 0
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `)
-
-      await connection.query(`
-        CREATE TABLE IF NOT EXISTS imported_products (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            batch_id INT NOT NULL,
-            sku VARCHAR(100) NOT NULL,
-            manufacturer_code VARCHAR(100),
-            name VARCHAR(255) NOT NULL,
-            price DECIMAL(10, 2) DEFAULT 0.00,
-            stock_amount INT DEFAULT 0,
-            description TEXT,
-            image_url TEXT,
-            brand VARCHAR(100),
-            category_xml_name VARCHAR(255),
-            selected_category_id INT,
-            ideasoft_category_name VARCHAR(255),
-            ideasoft_product_id INT,
-            ideasoft_product_variant_id INT,
-            status TINYINT DEFAULT 0,
-            transfer_status CHAR(20) DEFAULT 'PENDING',
-            transfer_error TEXT,
-            last_transfer_date TIMESTAMP NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (batch_id) REFERENCES import_batches(id) ON DELETE CASCADE,
-            INDEX idx_sku (sku),
-            INDEX idx_batch (batch_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `)
-
-      console.log('✅ Database tables checked/created successfully')
-    } finally {
-      connection.release()
+    // Supabase'de tablolar zaten oluşturulmuş olmalı
+    // Sadece bağlantıyı test et
+    const { data, error } = await supabase
+      .from('import_batches')
+      .select('id')
+      .limit(1)
+    
+    if (error) {
+      console.error('❌ Supabase Connection Failed:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      })
+      console.log('💡 Lütfen Supabase ayarlarını kontrol edin.')
+      console.log('💡 Tablolar oluşturulmuş mu kontrol edin (supabase_schema.sql dosyasını çalıştırın)')
+    } else {
+      console.log('✅ Supabase Database Connected Successfully')
     }
   } catch (error) {
-    console.error('❌ Database Connection Failed:', error.message)
-    console.log('💡 Lütfen veritabanı ayarlarını kontrol edin.')
+    console.error('❌ Supabase Connection Failed:', {
+      message: error.message,
+      code: error.code,
+      details: error.details
+    })
+    console.log('💡 Lütfen Supabase ayarlarını kontrol edin.')
   }
 }
 
@@ -1845,9 +1852,15 @@ app.post('/api/db/create-batch', async (req, res) => {
   try {
     const { products, projectName } = req.body
 
-    if (!pool) return res.status(500).json({ success: false, error: 'Veritabanı bağlantısı yok' })
-    if (!products || products.length === 0) return res.status(400).json({ success: false, error: 'Ürün listesi boş' })
-    if (!projectName) return res.status(400).json({ success: false, error: 'Proje ismi gerekli' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
+    }
+    if (!products || products.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ürün listesi boş' })
+    }
+    if (!projectName) {
+      return res.status(400).json({ success: false, error: 'Proje ismi gerekli' })
+    }
 
     // Aynı SKU kontrolü (aynı SKU'lar ileride status güncellemelerinde birbirini ezer)
     const skuCounts = new Map()
@@ -1865,170 +1878,165 @@ app.post('/api/db/create-batch', async (req, res) => {
       })
     }
 
-    const connection = await pool.getConnection()
-
-    try {
-      await connection.beginTransaction()
-
-      // 1. Batch oluştur
-      const [batchResult] = await connection.query(
-        'INSERT INTO import_batches (name, total_products, status) VALUES (?, ?, ?)',
-        [projectName, products.length, 'PROCESSING']
-      )
-      const batchId = batchResult.insertId
-
-      // 2. Ürünleri ekle
-      const query = `
-        INSERT INTO imported_products 
-        (batch_id, sku, manufacturer_code, name, price, stock_amount, description, image_url, brand, category_xml_name, selected_category_id, ideasoft_category_name, status, transfer_status) 
-        VALUES ?
-      `
-
-      // Map products
-      const values = products.map(p => [
-        batchId,
-        String(p.sku || '').trim(),
-        String(p.manufacturerCode || p.manufacturer_code || '').trim(),
-        String(p.name || '').trim(),
-        Number(p.price ?? p.price1 ?? 0) || 0,
-        Number(p.stock ?? p.stockAmount ?? p.stock_amount ?? 0) || 0,
-        String(p.description || '').trim(),
-        String(p.image || p.imageUrl || p.image_url || '').trim(),
-        String(p.brand || '').trim(),
-        String(p.category || p.category_xml_name || '').trim(),
-        (p.categoryId === undefined || p.categoryId === null || p.categoryId === '')
-          ? null
-          : Number(p.categoryId),
-        (p.categoryName === undefined || p.categoryName === null || p.categoryName === '')
-          ? null
-          : String(p.categoryName),
-        0,
-        'PENDING'
-      ])
-
-      await connection.query(query, [values])
-
-      await connection.commit()
-
-      return res.status(200).json({
-        success: true,
-        message: 'Proje oluşturuldu',
-        batchId: batchId
+    // 1. Batch oluştur
+    const { data: batch, error: batchError } = await supabase
+      .from('import_batches')
+      .insert({
+        name: projectName,
+        total_products: products.length,
+        status: 'PROCESSING'
       })
+      .select()
+      .single()
 
-    } catch (error) {
-      await connection.rollback()
-      throw error
-    } finally {
-      connection.release()
+    if (batchError) {
+      throw batchError
     }
+
+    const batchId = batch.id
+
+    // 2. Ürünleri ekle
+    const productsToInsert = products.map(p => ({
+      batch_id: batchId,
+      sku: String(p.sku || '').trim(),
+      manufacturer_code: String(p.manufacturerCode || p.manufacturer_code || '').trim(),
+      name: String(p.name || '').trim(),
+      price: Number(p.price ?? p.price1 ?? 0) || 0,
+      stock_amount: Number(p.stock ?? p.stockAmount ?? p.stock_amount ?? 0) || 0,
+      description: String(p.description || '').trim(),
+      image_url: String(p.image || p.imageUrl || p.image_url || '').trim(),
+      brand: String(p.brand || '').trim(),
+      category_xml_name: String(p.category || p.category_xml_name || '').trim(),
+      selected_category_id: (p.categoryId === undefined || p.categoryId === null || p.categoryId === '')
+        ? null
+        : Number(p.categoryId),
+      ideasoft_category_name: (p.categoryName === undefined || p.categoryName === null || p.categoryName === '')
+        ? null
+        : String(p.categoryName),
+      status: 0,
+      transfer_status: 'PENDING'
+    }))
+
+    const { error: productsError } = await supabase
+      .from('imported_products')
+      .insert(productsToInsert)
+
+    if (productsError) {
+      throw productsError
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Proje oluşturuldu',
+      batchId: batchId
+    })
   } catch (error) {
     console.error('Batch Create Error:', error)
-    const msg = error?.sqlMessage || error?.message || 'Batch create failed'
+    const msg = error?.message || 'Batch create failed'
     return res.status(500).json({
       success: false,
       error: msg,
-      code: error?.code,
-      errno: error?.errno
+      code: error?.code
     })
   }
 })
 
 // Get all batches
 app.get('/api/db/batches', async (req, res) => {
-  let connection = null;
   try {
-    if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
-
-    // Connection pool'dan bağlantı al
-    connection = await pool.getConnection();
-    
-    const [rows] = await connection.query({
-      sql: 'SELECT * FROM import_batches ORDER BY created_at DESC',
-      timeout: 30000 // 30 saniye timeout
-    })
-    
-    return res.json({ success: true, data: rows })
-  } catch (error) {
-    console.error('Get Batches Error:', error)
-    
-    // ECONNRESET ve connection hatalarını yakala
-    if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('❌ Supabase credentials eksik:', { hasUrl: !!supabaseUrl, hasKey: !!supabaseServiceKey, hasClient: !!supabase })
       return res.status(500).json({ 
         success: false, 
-        error: 'Veritabanı bağlantısı kesildi. Lütfen sayfayı yenileyin ve tekrar deneyin.' 
+        error: 'Supabase bağlantısı yapılandırılmamış. SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY environment variable\'larını kontrol edin.' 
       })
     }
+
+    const { data, error } = await supabase
+      .from('import_batches')
+      .select('*')
+      .order('created_at', { ascending: false })
     
+    if (error) {
+      console.error('❌ Supabase Query Error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      })
+      throw error
+    }
+    
+    return res.json({ success: true, data: data || [] })
+  } catch (error) {
+    console.error('Get Batches Error:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    })
     return res.status(500).json({ 
       success: false, 
-      error: error.message || 'Veritabanı hatası oluştu' 
+      error: error.message || error.details || 'Veritabanı hatası oluştu',
+      code: error.code,
+      hint: error.hint
     })
-  } finally {
-    // Bağlantıyı her zaman release et
-    if (connection) {
-      connection.release();
-    }
   }
 })
 
 // Get batch details with products
 app.get('/api/db/batches/:id', async (req, res) => {
-  let connection = null;
   try {
-    if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
+    }
 
     const batchId = parseInt(req.params.id, 10)
     if (isNaN(batchId)) {
       return res.status(400).json({ success: false, error: 'Invalid batch ID' })
     }
 
-    // Connection pool'dan bağlantı al
-    connection = await pool.getConnection();
-    
     // Batch info
-    const [batchRows] = await connection.query({
-      sql: 'SELECT * FROM import_batches WHERE id = ?',
-      timeout: 30000 // 30 saniye timeout
-    }, [batchId])
+    const { data: batch, error: batchError } = await supabase
+      .from('import_batches')
+      .select('*')
+      .eq('id', batchId)
+      .single()
     
-    if (batchRows.length === 0) {
+    if (batchError) {
+      if (batchError.code === 'PGRST116') {
+        return res.status(404).json({ success: false, error: 'Proje bulunamadı' })
+      }
+      throw batchError
+    }
+
+    if (!batch) {
       return res.status(404).json({ success: false, error: 'Proje bulunamadı' })
     }
 
     // Products
-    const [productRows] = await connection.query({
-      sql: 'SELECT * FROM imported_products WHERE batch_id = ?',
-      timeout: 30000 // 30 saniye timeout
-    }, [batchId])
+    const { data: products, error: productsError } = await supabase
+      .from('imported_products')
+      .select('*')
+      .eq('batch_id', batchId)
+
+    if (productsError) {
+      throw productsError
+    }
 
     return res.json({
       success: true,
       data: {
-        ...batchRows[0],
-        products: productRows
+        ...batch,
+        products: products || []
       }
     })
   } catch (error) {
     console.error('Get Batch Details Error:', error)
-    
-    // ECONNRESET ve connection hatalarını yakala
-    if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Veritabanı bağlantısı kesildi. Lütfen sayfayı yenileyin ve tekrar deneyin.' 
-      })
-    }
-    
     return res.status(500).json({ 
       success: false, 
       error: error.message || 'Veritabanı hatası oluştu' 
     })
-  } finally {
-    // Bağlantıyı her zaman release et
-    if (connection) {
-      connection.release();
-    }
   }
 })
 
@@ -2036,34 +2044,47 @@ app.get('/api/db/batches/:id', async (req, res) => {
 app.post('/api/db/update-batch-stats', async (req, res) => {
   try {
     const { batchId } = req.body
-    if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
-
-    const connection = await pool.getConnection()
-    try {
-      // Calculate stats
-      const [stats] = await connection.query(`
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN transfer_status = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
-          SUM(CASE WHEN transfer_status = 'FAILED' THEN 1 ELSE 0 END) as failed
-        FROM imported_products WHERE batch_id = ?
-      `, [batchId])
-
-      const { total, successful, failed } = stats[0]
-      const status = (successful + failed) >= total ? 'COMPLETED' : 'PROCESSING'
-
-      await connection.query(`
-        UPDATE import_batches 
-        SET total_products = ?, successful_products = ?, failed_products = ?, status = ?
-        WHERE id = ?
-      `, [total, successful, failed, status, batchId])
-
-      return res.json({ success: true })
-    } finally {
-      connection.release()
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
     }
+    if (!batchId) {
+      return res.status(400).json({ success: false, error: 'batchId gerekli' })
+    }
+
+    // Stats hesapla
+    const { data: products, error: productsError } = await supabase
+      .from('imported_products')
+      .select('transfer_status')
+      .eq('batch_id', batchId)
+
+    if (productsError) {
+      throw productsError
+    }
+
+    const total = products.length
+    const successful = products.filter(p => p.transfer_status === 'SUCCESS').length
+    const failed = products.filter(p => p.transfer_status === 'FAILED').length
+    const status = (successful + failed) >= total ? 'COMPLETED' : 'PROCESSING'
+
+    // Batch'i güncelle
+    const { error: updateError } = await supabase
+      .from('import_batches')
+      .update({
+        total_products: total,
+        successful_products: successful,
+        failed_products: failed,
+        status: status
+      })
+      .eq('id', batchId)
+
+    if (updateError) {
+      throw updateError
+    }
+
+    return res.json({ success: true })
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message })
+    console.error('Update Batch Stats Error:', error)
+    return res.status(500).json({ success: false, error: error.message || 'Update failed' })
   }
 })
 
@@ -2071,31 +2092,33 @@ app.post('/api/db/update-batch-stats', async (req, res) => {
 // Update Ideasoft Status
 app.post('/api/db/update-status', async (req, res) => {
   try {
-    const { sku, ideasoftId, status, error } = req.body
+    const { sku, ideasoftId, status, error: errorMsg } = req.body
 
-    if (!pool) {
-      return res.status(500).json({ success: false, error: 'Database not connected' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
     }
 
-    const query = `
-      UPDATE imported_products 
-      SET 
-        ideasoft_product_id = ?,
-        transfer_status = ?,
-        transfer_error = ?,
-        last_transfer_date = IF(? = 'SUCCESS', NOW(), last_transfer_date)
-      WHERE sku = ?
-    `
+    const updateData = {
+      ideasoft_product_id: ideasoftId || null,
+      transfer_status: status || 'PENDING',
+      transfer_error: errorMsg || null
+    }
 
-    const [result] = await pool.query(query, [
-      ideasoftId || null,
-      status || 'PENDING',
-      error || null,
-      status || 'PENDING',
-      sku
-    ])
+    // Eğer status SUCCESS ise last_transfer_date'i güncelle
+    if (status === 'SUCCESS') {
+      updateData.last_transfer_date = new Date().toISOString()
+    }
 
-    return res.json({ success: true, affected: result.affectedRows })
+    const { error } = await supabase
+      .from('imported_products')
+      .update(updateData)
+      .eq('sku', sku)
+
+    if (error) {
+      throw error
+    }
+
+    return res.json({ success: true })
 
   } catch (error) {
     console.error('Database Update Error:', error)
@@ -2108,17 +2131,22 @@ app.post('/api/db/update-category', async (req, res) => {
   try {
     const { sku, categoryId, categoryName } = req.body
 
-    if (!pool) return res.status(500).json({ success: false, error: 'No DB connection' })
+    if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase bağlantısı yapılandırılmamış' })
+    }
 
-    const query = `
-      UPDATE imported_products 
-      SET 
-        selected_category_id = ?,
-        ideasoft_category_name = ?
-      WHERE sku = ?
-    `
+    const { error } = await supabase
+      .from('imported_products')
+      .update({
+        selected_category_id: categoryId || null,
+        ideasoft_category_name: categoryName || null
+      })
+      .eq('sku', sku)
 
-    await pool.query(query, [categoryId, categoryName, sku])
+    if (error) {
+      throw error
+    }
+
     return res.json({ success: true })
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message })
@@ -2128,4 +2156,10 @@ app.post('/api/db/update-category', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Development API server running on http://localhost:${PORT}`)
+  if (!supabaseUrl || !supabaseServiceKey || !supabase) {
+    console.log('⚠️  Supabase bağlantısı yapılandırılmamış - Database endpoint\'leri çalışmayacak')
+    console.log('💡 .env dosyasına SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY ekleyin')
+  } else {
+    console.log('✅ Supabase bağlantısı hazır')
+  }
 })

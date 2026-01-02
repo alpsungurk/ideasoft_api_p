@@ -212,9 +212,9 @@ export const enrichProductImagesOnly = async (products, onProgress) => {
 
     const query = `${p.brand || ''} ${p.name}`.trim();
     try {
-      const imageUrl = await findImageWithGoogle(query);
-      if (imageUrl) {
-        p.image = imageUrl;
+    const imageUrl = await findImageWithGoogle(query);
+    if (imageUrl) {
+      p.image = imageUrl;
       }
     } catch (error) {
       if (error.message === 'GOOGLE_QUOTA_EXCEEDED') {

@@ -511,8 +511,8 @@ export const exchangeCodeForToken = async (code, shopId, clientId, clientSecret,
       errorMessage = error.response.data?.error ||
         error.response.data?.error_description ||
         error.response.data?.message ||
-        error.message ||
-        'Token alınamadı'
+      error.message ||
+      'Token alınamadı'
     } else if (error.request) {
       errorMessage = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.'
     } else {

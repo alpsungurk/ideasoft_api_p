@@ -67,14 +67,14 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
     return `${batch.name} (#${batch.id})`;
   }, [batch, projectId]);
 
-  const load = async () => {
+  const load = async (preserveOrder = false) => {
     setLoading(true);
     setError(null);
     try {
       const result = await getBatchDetails(projectId);
       if (!result?.success) throw new Error(result?.error || 'Proje detayı alınamadı');
       setBatch(result.data);
-      const initialProducts = (result.data?.products || []).map(p => ({
+      const newProducts = (result.data?.products || []).map(p => ({
         ...p,
         categoryId:
           p.categoryId ??
@@ -93,6 +93,26 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
         _remote: null,
         _remoteStatus: p.ideasoft_product_id ? 'unknown' : 'na'
       }));
+
+      // Eğer sıralama korunacaksa, mevcut sırayı koru
+      let initialProducts = newProducts;
+      if (preserveOrder && products.length > 0) {
+        // Mevcut ürünlerin sırasını koru
+        const currentOrder = products.map(p => p.id);
+        const newProductsMap = new Map(newProducts.map(p => [p.id, p]));
+        
+        // Mevcut sıraya göre sırala
+        const orderedProducts = currentOrder
+          .map(id => newProductsMap.get(id))
+          .filter(Boolean);
+        
+        // Yeni eklenen ürünleri (mevcut listede olmayan) sona ekle
+        const existingIds = new Set(currentOrder);
+        const newProductsOnly = newProducts.filter(p => !existingIds.has(p.id));
+        
+        initialProducts = [...orderedProducts, ...newProductsOnly];
+      }
+
       setProducts(initialProducts);
       setSelectedProducts(new Set()); // Seçimleri temizle
 
@@ -289,16 +309,18 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handleBulkSave = async () => {
-    // Sadece seçili ürünleri al
+    // Seçim varsa sadece seçili ürünleri, yoksa tüm ürünleri al
     const selectedIds = Array.from(selectedProducts);
-    if (selectedIds.length === 0) {
-      showNotification('Lütfen kaydetmek istediğiniz ürünleri seçin.', 'warning');
-      return;
-    }
+    const targetProducts = selectedIds.length > 0 
+      ? products.filter(p => selectedIds.includes(p.id))
+      : products;
     
-    const dirtyProducts = products.filter(p => selectedIds.includes(p.id) && p._dirty);
+    const dirtyProducts = targetProducts.filter(p => p._dirty);
     if (dirtyProducts.length === 0) {
-      showNotification('Seçili ürünlerde kaydedilecek değişiklik yok.', 'warning');
+      const message = selectedIds.length > 0 
+        ? 'Seçili ürünlerde kaydedilecek değişiklik yok.'
+        : 'Kaydedilecek değişiklik yok.';
+      showNotification(message, 'warning');
       return;
     }
   
@@ -322,38 +344,39 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
       }
     }
   
-    // Refresh to sync everything
-    await load();
+    // Refresh to sync everything - sıralamayı koru
+    await load(true);
     showNotification(`${successCount} ürün başarıyla veritabanına kaydedildi.`, 'success');
     setBulkSaving(false);
   };
 
   const handleBulkUpdateIdeasoft = async () => {
-    // Sadece seçili ürünleri al
+    // Seçim varsa sadece seçili ürünleri, yoksa tüm ürünleri al
     const selectedIds = Array.from(selectedProducts);
-    if (selectedIds.length === 0) {
-      showNotification('Lütfen göndermek istediğiniz ürünleri seçin.', 'warning');
-      return;
-    }
+    const allTargetProducts = selectedIds.length > 0
+      ? products.filter(p => selectedIds.includes(p.id))
+      : products;
     
-    // Seçili ürünleri al - ideasoft_product_id olanlar veya başarısız durumdaki ürünler
-    const targetProducts = products.filter(p => {
-      if (!selectedIds.includes(p.id)) return false;
+    // ideasoft_product_id olanlar veya başarısız durumdaki ürünler
+    const targetProducts = allTargetProducts.filter(p => {
       const isFailed = String(p.transfer_status || '').toUpperCase() === 'FAILED';
       // ideasoft_product_id olanlar veya başarısız durumdaki ürünler (ideasoft_product_id olsa da olmasa da)
       return p.ideasoft_product_id || isFailed;
     });
-    const selectedCount = selectedIds.length;
+    const selectedCount = selectedIds.length > 0 ? selectedIds.length : products.length;
     
     if (targetProducts.length === 0) {
-      showNotification('Seçili ürünlerde Ideasoft\'a gönderilecek ürün bulunamadı.', 'warning');
+      const message = selectedIds.length > 0
+        ? 'Seçili ürünlerde Ideasoft\'a gönderilecek ürün bulunamadı.'
+        : 'Ideasoft\'a gönderilecek ürün bulunamadı.';
+      showNotification(message, 'warning');
       return;
     }
 
     setConfirmState({
       open: true,
       title: 'Onay',
-      message: `${selectedCount} ürün seçildi. ${targetProducts.length} ürünü Ideasoft'a göndermek istediğinize emin misiniz?`,
+      message: `${selectedIds.length > 0 ? selectedCount + ' ürün seçildi' : 'Tüm ürünler'}. ${targetProducts.length} ürünü Ideasoft'a göndermek istediğinize emin misiniz?`,
       onConfirm: async () => {
         setConfirmState({ open: false, title: '', message: '', onConfirm: null });
         setBulkPosting(true);
@@ -758,7 +781,7 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           // ignore
         }
 
-        await load();
+        await load(true);
 
         if (recreatedCount > 0) {
           showNotification(`${successCount} ürün işlendi. ${recreatedCount} ürün yeniden yüklendi.`, 'success');
@@ -779,25 +802,27 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
   };
 
   const handleBulkPullFromIdeasoft = async () => {
-    // Sadece seçili ürünleri al
+    // Seçim varsa sadece seçili ürünleri, yoksa tüm ürünleri al
     const selectedIds = Array.from(selectedProducts);
-    if (selectedIds.length === 0) {
-      showNotification('Lütfen çekmek istediğiniz ürünleri seçin.', 'warning');
-      return;
-    }
+    const allTargetProducts = selectedIds.length > 0
+      ? products.filter(p => selectedIds.includes(p.id))
+      : products;
     
-    const targetProducts = products.filter(p => selectedIds.includes(p.id) && p.ideasoft_product_id);
-    const selectedCount = selectedIds.length;
+    const targetProducts = allTargetProducts.filter(p => p.ideasoft_product_id);
+    const selectedCount = selectedIds.length > 0 ? selectedIds.length : products.length;
     
     if (targetProducts.length === 0) {
-      showNotification('Seçili ürünlerde Ideasoft ürün ID\'si bulunamadı.', 'warning');
+      const message = selectedIds.length > 0
+        ? 'Seçili ürünlerde Ideasoft ürün ID\'si bulunamadı.'
+        : 'Ideasoft ürün ID\'si bulunamadı.';
+      showNotification(message, 'warning');
       return;
     }
 
     setConfirmState({
       open: true,
       title: 'Onay',
-      message: `${selectedCount} ürün seçildi. ${targetProducts.length} ürünü Ideasoft verileriyle güncellemek (DB'ye kaydetmek) istediğinize emin misiniz? Yerel değişiklikleriniz kaybolabilir.`,
+      message: `${selectedIds.length > 0 ? selectedCount + ' ürün seçildi' : 'Tüm ürünler'}. ${targetProducts.length} ürünü Ideasoft verileriyle güncellemek (DB'ye kaydetmek) istediğinize emin misiniz? Yerel değişiklikleriniz kaybolabilir.`,
       onConfirm: async () => {
         setConfirmState({ open: false, title: '', message: '', onConfirm: null });
         setBulkPulling(true);
@@ -878,7 +903,7 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
           }
         }
 
-        await load();
+        await load(true);
         if (errorCount > 0) {
           showNotification(`${successCount} ürün başarıyla çekildi, ${errorCount} ürün çekilemedi.`, 'warning');
         } else {
