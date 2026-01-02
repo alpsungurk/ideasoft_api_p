@@ -84,6 +84,14 @@ export default async function handler(req, res) {
       })
     }
     
+    // Access denied hatası için özel mesaj
+    if (error.code === 'ER_ACCESS_DENIED_ERROR' || error.message?.includes('Access denied')) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Veritabanı erişim hatası: Kullanıcı adı veya şifre hatalı, ya da veritabanı kullanıcısının uzaktan bağlantı izni yok. Lütfen veritabanı ayarlarınızı kontrol edin.' 
+      })
+    }
+    
     return res.status(500).json({ 
       success: false, 
       error: error.message || 'Veritabanı hatası oluştu' 

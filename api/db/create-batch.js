@@ -123,6 +123,15 @@ export default async function handler(req, res) {
     }
   } catch (error) {
     console.error('Batch Create Error:', error)
+    
+    // Access denied hatası için özel mesaj
+    if (error.code === 'ER_ACCESS_DENIED_ERROR' || error.message?.includes('Access denied')) {
+      return res.status(500).json({
+        success: false,
+        error: 'Veritabanı erişim hatası: Kullanıcı adı veya şifre hatalı, ya da veritabanı kullanıcısının uzaktan bağlantı izni yok. Lütfen veritabanı ayarlarınızı kontrol edin.'
+      })
+    }
+    
     const msg = error?.sqlMessage || error?.message || 'Batch create failed'
     return res.status(500).json({
       success: false,
