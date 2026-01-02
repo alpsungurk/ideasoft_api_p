@@ -1,7 +1,7 @@
 // Vercel Serverless Function - OAuth2 Authorization Code ile Token alma
-const axios = require('axios')
+import axios from 'axios'
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   try {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*')
