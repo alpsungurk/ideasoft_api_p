@@ -28,10 +28,6 @@ function getPool() {
 export default async function handler(req, res) {
   let connection = null
   try {
-    if (req.method !== 'GET') {
-      return res.status(405).json({ success: false, error: 'Method not allowed' })
-    }
-
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
@@ -41,17 +37,42 @@ export default async function handler(req, res) {
       return res.status(200).end()
     }
 
+    if (req.method !== 'GET') {
+      return res.status(405).json({ success: false, error: 'Method not allowed' })
+    }
+
+    console.log('📥 Get Batches Request:', {
+      method: req.method,
+      hasEnv: {
+        DB_HOST: !!process.env.DB_HOST,
+        DB_USER: !!process.env.DB_USER,
+        DB_PASSWORD: !!process.env.DB_PASSWORD,
+        DB_NAME: !!process.env.DB_NAME,
+        PORT: process.env.PORT || process.env.DB_PORT
+      }
+    })
+
     const pool = getPool()
     connection = await pool.getConnection()
+    
+    console.log('✅ Database connection acquired')
     
     const [rows] = await connection.query({
       sql: 'SELECT * FROM import_batches ORDER BY created_at DESC',
       timeout: 30000
     })
     
+    console.log('✅ Query executed, rows:', rows.length)
+    
     return res.status(200).json({ success: true, data: rows })
   } catch (error) {
-    console.error('Get Batches Error:', error)
+    console.error('❌ Get Batches Error:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      message: error.message,
+      stack: error.stack
+    })
     
     if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
       return res.status(500).json({ 
@@ -64,17 +85,28 @@ export default async function handler(req, res) {
     if (error.code === 'ER_ACCESS_DENIED_ERROR' || error.message?.includes('Access denied')) {
       return res.status(500).json({ 
         success: false, 
-        error: 'Veritabanı erişim hatası: Kullanıcı adı veya şifre hatalı, ya da veritabanı kullanıcısının uzaktan bağlantı izni yok. Lütfen veritabanı ayarlarınızı kontrol edin.' 
+        error: 'Veritabanı erişim hatası: Kullanıcı adı veya şifre hatalı, ya da veritabanı kullanıcısının uzaktan bağlantı izni yok. Plesk\'te kullanıcı ayarlarından "Herhangi bir ana bilgisayardan uzaktan bağlantılara izin ver" seçeneğini aktif edin.' 
+      })
+    }
+    
+    // Connection refused
+    if (error.code === 'ECONNREFUSED') {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Veritabanı bağlantısı reddedildi: Host veya port ayarlarını kontrol edin. Plesk\'te MySQL remote access\'in aktif olduğundan emin olun.' 
       })
     }
     
     return res.status(500).json({ 
       success: false, 
-      error: error.message || 'Veritabanı hatası oluştu' 
+      error: error.message || 'Veritabanı hatası oluştu',
+      code: error.code,
+      errno: error.errno
     })
   } finally {
     if (connection) {
       connection.release()
+      console.log('✅ Connection released')
     }
   }
 }
