@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getBatchDetails, updateImportedProduct, updateImportedProductsBatch, updateProductStatus, updateBatchStats } from '../services/databaseService';
-import { getIdeasoftProductsBatch, updateIdeasoftProduct, getCategories, getStoredToken, recreateDeletedProduct, postProductDetail, postProductImage, getIdeasoftProduct } from '../services/ideasoftService';
+import { getIdeasoftProductsBatch, updateIdeasoftProduct, getCategories, getStoredToken, recreateDeletedProduct, postProductDetail, postProductImage, getIdeasoftProduct, findIdeasoftProductBySku } from '../services/ideasoftService';
 import { normalizeErrorMessage, isDuplicateError } from '../utils/errorHandler';
 import './ProjectDetail.css';
 
@@ -1210,37 +1210,128 @@ const ProjectDetail = ({ projectId, appConfig, onBack }) => {
 
       // Create/recreate if missing
       if (!ensuredIdeasoftId) {
-        const productData = {
-          name: row.name || '',
-          fullName: row.name || '',
-          sku: row.sku || '',
-          price1: Number(row.price) || 0,
-          stockAmount: Number(row.stock_amount) || 0,
-          status: Number(row.status) ? 1 : 0,
-        };
-        const createRes = await recreateDeletedProduct(productData, apiKey, shopId);
-        if (!createRes?.success || !createRes?.data?.id) {
-          const errorMsg = normalizeErrorMessage(createRes?.error || 'Ürün Ideasoft\'a gönderilemedi');
-          // Duplicate hatası ise modal göster
-          if (isDuplicateError(createRes?.error) || isDuplicateError(errorMsg)) {
-            showNotification(errorMsg, 'error');
+        // Önce SKU ile ürünü Ideasoft'ta ara
+        let existingProduct = null;
+        if (row.sku) {
+          try {
+            const findRes = await findIdeasoftProductBySku({
+              shopId,
+              accessToken: apiKey,
+              sku: row.sku
+            });
+            if (findRes?.success && findRes?.data?.id) {
+              existingProduct = findRes.data;
+              ensuredIdeasoftId = existingProduct.id;
+            }
+          } catch (e) {
+            // SKU ile bulunamadı, yeni ürün oluşturulacak
+            console.log('SKU ile ürün bulunamadı, yeni ürün oluşturulacak:', e);
           }
-          throw new Error(errorMsg);
         }
 
-        ensuredIdeasoftId = createRes.data.id;
+        // Eğer SKU ile bulunduysa, update yap
+        if (ensuredIdeasoftId && existingProduct) {
+          const productData = {
+            name: row.name || '',
+            fullName: row.name || '',
+            sku: row.sku || '',
+            price1: Number(row.price) || 0,
+            stockAmount: Number(row.stock_amount) || 0,
+            status: Number(row.status) ? 1 : 0,
+            details: row.description || '',
+            categoryId: row.categoryId
+          };
 
-        await updateProductStatus(row.sku, ensuredIdeasoftId, 'SUCCESS', null);
+          const updateRes = await updateIdeasoftProduct({
+            shopId,
+            accessToken: apiKey,
+            productId: ensuredIdeasoftId,
+            productData
+          });
 
-        await updateImportedProduct(row.id, {
-          ideasoft_product_id: ensuredIdeasoftId
-        });
+          if (!updateRes?.success) {
+            throw new Error(updateRes?.error || 'Ideasoft güncellenemedi');
+          }
 
-        setProducts(prev => prev.map(p =>
-          p.id !== row.id
-            ? p
-            : { ...p, ideasoft_product_id: ensuredIdeasoftId, _remote: createRes.data, _remoteStatus: 'found', _dirty: false }
-        ));
+          setProducts(prev => prev.map(p =>
+            p.id !== row.id ? p : { ...p, _remote: updateRes.data, _remoteStatus: 'found', _dirty: false }
+          ));
+        } else {
+          // SKU ile bulunamadı, yeni ürün oluştur
+          const productData = {
+            name: row.name || '',
+            fullName: row.name || '',
+            sku: row.sku || '',
+            price1: Number(row.price) || 0,
+            stockAmount: Number(row.stock_amount) || 0,
+            status: Number(row.status) ? 1 : 0,
+          };
+          const createRes = await recreateDeletedProduct(productData, apiKey, shopId);
+          if (!createRes?.success || !createRes?.data?.id) {
+            const errorMsg = normalizeErrorMessage(createRes?.error || 'Ürün Ideasoft\'a gönderilemedi');
+            // Duplicate hatası ise, SKU ile tekrar kontrol et ve update yap
+            if (isDuplicateError(createRes?.error) || isDuplicateError(errorMsg)) {
+              if (row.sku) {
+                try {
+                  const findRes = await findIdeasoftProductBySku({
+                    shopId,
+                    accessToken: apiKey,
+                    sku: row.sku
+                  });
+                  if (findRes?.success && findRes?.data?.id) {
+                    // Ürün bulundu, update yap
+                    ensuredIdeasoftId = findRes.data.id;
+                    const updateProductData = {
+                      name: row.name || '',
+                      fullName: row.name || '',
+                      sku: row.sku || '',
+                      price1: Number(row.price) || 0,
+                      stockAmount: Number(row.stock_amount) || 0,
+                      status: Number(row.status) ? 1 : 0,
+                      details: row.description || '',
+                      categoryId: row.categoryId
+                    };
+                    const updateRes = await updateIdeasoftProduct({
+                      shopId,
+                      accessToken: apiKey,
+                      productId: ensuredIdeasoftId,
+                      productData: updateProductData
+                    });
+                    if (updateRes?.success) {
+                      setProducts(prev => prev.map(p =>
+                        p.id !== row.id ? p : { ...p, _remote: updateRes.data, _remoteStatus: 'found', _dirty: false }
+                      ));
+                    } else {
+                      throw new Error(updateRes?.error || 'Ideasoft güncellenemedi');
+                    }
+                  } else {
+                    throw new Error(errorMsg);
+                  }
+                } catch (e) {
+                  throw new Error(errorMsg);
+                }
+              } else {
+                throw new Error(errorMsg);
+              }
+            } else {
+              throw new Error(errorMsg);
+            }
+          } else {
+            ensuredIdeasoftId = createRes.data.id;
+
+            await updateProductStatus(row.sku, ensuredIdeasoftId, 'SUCCESS', null);
+
+            await updateImportedProduct(row.id, {
+              ideasoft_product_id: ensuredIdeasoftId
+            });
+
+            setProducts(prev => prev.map(p =>
+              p.id !== row.id
+                ? p
+                : { ...p, ideasoft_product_id: ensuredIdeasoftId, _remote: createRes.data, _remoteStatus: 'found', _dirty: false }
+            ));
+          }
+        }
       }
 
       // Push details

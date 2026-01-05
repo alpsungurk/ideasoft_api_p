@@ -6,6 +6,108 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Helper functions
+const normalizeSku = (sku: any) => String(sku ?? '').trim()
+
+const extractIdeasoftListItems = (data: any) => {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.data)) return data.data
+  if (Array.isArray(data.products)) return data.products
+  return []
+}
+
+const findProductInListBySku = (items: any[], sku: string) => {
+  const target = normalizeSku(sku)
+  if (!target) return null
+  for (const it of items) {
+    const itSku = normalizeSku(it?.sku)
+    if (itSku && itSku === target) return it
+  }
+  return null
+}
+
+// SKU ile ürün bul
+const findProductBySku = async (shopId: string, accessToken: string, sku: string) => {
+  const targetSku = normalizeSku(sku)
+  if (!targetSku) return null
+
+  const baseUrl = `https://${shopId}.myideasoft.com/admin-api/products`
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Accept': 'application/json'
+  }
+
+  // Try common server-side filters first
+  const filterParamVariants = [
+    { sku: targetSku },
+    { search: targetSku },
+    { query: targetSku },
+    { keyword: targetSku }
+  ]
+
+  for (const params of filterParamVariants) {
+    try {
+      const searchUrl = new URL(baseUrl)
+      Object.entries(params).forEach(([key, value]) => {
+        searchUrl.searchParams.set(key, String(value))
+      })
+      
+      const resp = await fetch(searchUrl.toString(), { headers })
+      if (!resp.ok) continue
+      
+      const respData = await resp.json().catch(() => null)
+      if (!respData) continue
+      
+      const items = extractIdeasoftListItems(respData)
+      const hit = findProductInListBySku(items, targetSku)
+      if (hit) return hit
+    } catch (_) {
+      // ignore and fallback
+    }
+  }
+
+  // Fallback: scan paginated lists (best-effort)
+  const pageParamVariants = [
+    (page: number, limit: number) => ({ page, limit }),
+    (page: number, limit: number) => ({ page, perPage: limit }),
+    (page: number, limit: number) => ({ page, per_page: limit }),
+    (page: number, limit: number) => ({ pageNumber: page, pageSize: limit })
+  ]
+
+  const limit = 100
+  const maxPages = 5 // Limit to 5 pages for performance
+
+  for (const buildParams of pageParamVariants) {
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const searchUrl = new URL(baseUrl)
+        const params = buildParams(page, limit)
+        Object.entries(params).forEach(([key, value]) => {
+          searchUrl.searchParams.set(key, String(value))
+        })
+        
+        const resp = await fetch(searchUrl.toString(), { headers })
+        if (!resp.ok) break
+        
+        const respData = await resp.json().catch(() => null)
+        if (!respData) break
+        
+        const items = extractIdeasoftListItems(respData)
+        if (!items || items.length === 0) break
+        
+        const hit = findProductInListBySku(items, targetSku)
+        if (hit) return hit
+      } catch (_) {
+        break
+      }
+    }
+  }
+
+  return null
+}
+
 serve(async (req) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
