@@ -225,3 +225,4 @@ sudo lsof -i :3001
 - Nginx reverse proxy olarak çalışır ve SSL desteği sağlar
 
 
+

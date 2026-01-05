@@ -127,7 +127,11 @@ export const postProductImage = async ({ shopId, accessToken, localProductId, im
 
 export const findIdeasoftProductBySku = async ({ shopId, accessToken, sku }) => {
   try {
-    const response = await fetch('/api/ideasoft/find-product-by-sku', {
+    const apiBase = getIdeasoftApiBase()
+    // Supabase Edge Function kullan
+    const apiUrl = `${apiBase}/ideasoft-product-details`
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ shopId, accessToken, sku })
@@ -314,7 +318,11 @@ export const postProductDetail = async ({ shopId, accessToken, localProductId, d
 
 export const getIdeasoftProductsBatch = async ({ shopId, accessToken, productIds }) => {
   try {
-    const response = await fetch('/api/ideasoft/get-products-batch', {
+    const apiBase = getIdeasoftApiBase()
+    // Supabase Edge Function kullan
+    const apiUrl = `${apiBase}/ideasoft-get-products-batch`
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ shopId, accessToken, productIds })
@@ -336,10 +344,14 @@ export const getIdeasoftProductsBatch = async ({ shopId, accessToken, productIds
 export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, productData }) => {
   try {
     const { categoryId, ...rest } = productData || {}
-    const response = await fetch(`/api/ideasoft/products/${productId}`, {
-      method: 'PUT',
+    const apiBase = getIdeasoftApiBase()
+    // Supabase Edge Function kullan
+    const apiUrl = `${apiBase}/ideasoft-update-product`
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ shopId, accessToken, productData: rest })
+      body: JSON.stringify({ shopId, accessToken, productId, productData: rest })
     })
 
     const data = await response.json().catch(() => ({}))
@@ -370,7 +382,11 @@ export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, pr
 
 export const getIdeasoftProduct = async ({ shopId, accessToken, productId }) => {
   try {
-    const response = await fetch('/api/ideasoft/get-product', {
+    const apiBase = getIdeasoftApiBase()
+    // Supabase Edge Function kullan
+    const apiUrl = `${apiBase}/ideasoft-get-product`
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ shopId, accessToken, productId })
@@ -636,7 +652,11 @@ export const getCategories = async (accessToken, shopId) => {
  */
 export const recreateDeletedProduct = async (product, accessToken, shopId) => {
   try {
-    const response = await fetch('/api/recreate-deleted-product', {
+    const apiBase = getIdeasoftApiBase()
+    // Supabase Edge Function kullan (ideasoft-products ile aynı endpoint)
+    const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCTS}`
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({
