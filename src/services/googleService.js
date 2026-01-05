@@ -224,7 +224,9 @@ export const enrichProductsWithGoogle = async (products, onProgress) => {
             body: JSON.stringify({
               productName: p.name,
               brand: p.brand || '',
-              searchResults: webResults
+              searchResults: webResults,
+              categoryName: p.categoryName || '',
+              categoryId: p.categoryId || null
             })
           });
           

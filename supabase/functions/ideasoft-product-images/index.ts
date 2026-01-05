@@ -143,7 +143,7 @@ serve(async (req) => {
     })
 
     const body = await req.json()
-    const { shopId, accessToken, localProductId, imageUrl, ideasoftProductId, imageId, filename, extension, sortOrder, thumbUrl, originalUrl, alt, attachment } = body || {}
+    const { shopId, accessToken, localProductId, imageUrl, ideasoftProductId, imageId, productImageId, filename, extension, sortOrder, thumbUrl, originalUrl, alt, attachment } = body || {}
 
     if (!shopId || !accessToken) {
       return new Response(
@@ -202,7 +202,24 @@ serve(async (req) => {
 
     // Eğer imageUrl varsa, resmi indir ve base64'e çevir
     if (imageUrl) {
-      const imgResp = await fetch(imageUrl)
+      // URL'yi normalize et: // ile başlıyorsa https:// ekle
+      let normalizedImageUrl = String(imageUrl || '').trim()
+      if (normalizedImageUrl && normalizedImageUrl.startsWith('//')) {
+        normalizedImageUrl = 'https:' + normalizedImageUrl
+      }
+      
+      // URL geçerliliğini kontrol et
+      if (!normalizedImageUrl || !normalizedImageUrl.match(/^https?:\/\//i)) {
+        return new Response(
+          JSON.stringify({ success: false, error: `Geçersiz image URL: ${imageUrl}` }),
+          { 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 400 
+          }
+        )
+      }
+      
+      const imgResp = await fetch(normalizedImageUrl)
       if (!imgResp.ok) {
         throw new Error(`Image download failed: ${imgResp.status} ${imgResp.statusText}`)
       }
@@ -226,9 +243,12 @@ serve(async (req) => {
       resolvedFilename = resolvedFilename || `product-${resolvedIdeasoftProductId}.${resolvedExtension}`
     }
 
+    // productImageId veya imageId kullan (productImageId öncelikli)
+    const resolvedImageId = productImageId !== null && productImageId !== undefined ? Number(productImageId) : (imageId ? Number(imageId) : undefined)
+    
     // API dokümantasyonuna uygun payload oluştur
     const payload: any = {
-      id: imageId ? Number(imageId) : undefined, // Opsiyonel: güncelleme için
+      id: resolvedImageId, // Opsiyonel: güncelleme için
       filename: resolvedFilename || `product-${resolvedIdeasoftProductId}.jpg`,
       extension: resolvedExtension || 'jpg',
       sortOrder: sortOrder !== undefined ? Number(sortOrder) : 1,
@@ -248,11 +268,15 @@ serve(async (req) => {
       }
     })
 
-    const apiUrl = `https://${shopId}.myideasoft.com/admin-api/product_images`
+    // Eğer resolvedImageId varsa PUT, yoksa POST yap
+    const hasImageId = resolvedImageId !== null && resolvedImageId !== undefined && Number(resolvedImageId) > 0
+    const apiUrl = hasImageId
+      ? `https://${shopId}.myideasoft.com/admin-api/product_images/${Number(resolvedImageId)}`
+      : `https://${shopId}.myideasoft.com/admin-api/product_images`
     
     try {
       const response = await fetch(apiUrl, {
-        method: 'POST',
+        method: hasImageId ? 'PUT' : 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
@@ -306,7 +330,7 @@ serve(async (req) => {
       )
 
       if (isDuplicate) {
-        // Duplicate ise: mümkünse mevcut image kaydını bulup id ile update dene
+        // Duplicate ise: mümkünse mevcut image kaydını bulup PUT ile update dene
         try {
           const images = await fetchIdeasoftProductImagesForProduct({
             shopId,
@@ -317,9 +341,13 @@ serve(async (req) => {
             || images.find((it: any) => Number(it?.sortOrder || it?.sort_order || 0) === Number(payload.sortOrder || 1))
             || images[0]
           if (hit?.id) {
-            const updatePayload = { ...payload, id: Number(hit.id) }
-            const updResp = await fetch(apiUrl, {
-              method: 'POST',
+            const existingId = Number(hit.id)
+            const updatePayload = { ...payload, id: existingId }
+            const updateUrl = `https://${shopId}.myideasoft.com/admin-api/product_images/${existingId}`
+            
+            // PUT ile güncelle
+            const updResp = await fetch(updateUrl, {
+              method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
@@ -329,13 +357,37 @@ serve(async (req) => {
             })
 
             if (!updResp.ok) {
-              const errorData = await updResp.json().catch(() => ({}))
-              throw { response: { status: updResp.status, data: errorData } }
+              // PUT başarısız oldu, POST ile dene
+              console.warn('⚠️ ProductImage PUT başarısız, POST deneniyor:', updResp.status)
+              const postUrl = `https://${shopId}.myideasoft.com/admin-api/product_images`
+              const postResp = await fetch(postUrl, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
+                body: JSON.stringify(updatePayload)
+              })
+
+              if (!postResp.ok) {
+                const errorData = await postResp.json().catch(() => ({}))
+                throw { response: { status: postResp.status, data: errorData } }
+              }
+
+              const postRespData = await postResp.json()
+              console.log('✅ ProductImage duplicate sonrası POST ile güncellendi:', { productId: resolvedIdeasoftProductId, filename: payload.filename, imageId: existingId })
+              return new Response(
+                JSON.stringify({ success: true, data: postRespData, updated: true }),
+                { 
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                  status: 200 
+                }
+              )
             }
 
             const updRespData = await updResp.json()
-
-            console.log('✅ ProductImage duplicate sonrası güncellendi:', { productId: resolvedIdeasoftProductId, filename: payload.filename, imageId: hit.id })
+            console.log('✅ ProductImage duplicate sonrası PUT ile güncellendi:', { productId: resolvedIdeasoftProductId, filename: payload.filename, imageId: existingId })
             return new Response(
               JSON.stringify({ success: true, data: updRespData, updated: true }),
               { 

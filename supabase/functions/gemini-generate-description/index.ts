@@ -24,7 +24,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json()
-    const { productName, brand, features } = body || {}
+    const { productName, brand, features, categoryName, categoryId } = body || {}
     
     // Validate required parameters
     if (!productName) {
@@ -56,43 +56,56 @@ serve(async (req) => {
       )
     }
     
+    // Kategori bazlı prompt oluştur
+    let categoryContext = '';
+    if (categoryName) {
+      categoryContext = `\nKategori: ${categoryName}`;
+    }
+    
+    // Kategoriye göre örnek özellikler ve açıklama yönlendirmesi
+    let categoryGuidance = '';
+    if (categoryName) {
+      const categoryLower = String(categoryName).toLowerCase();
+      if (categoryLower.includes('anakart') || categoryLower.includes('motherboard')) {
+        categoryGuidance = '\n\nBu ürün bir anakart olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- Yonga seti (chipset)\n- İşlemci desteği ve soket tipi\n- Bellek tipi ve kanal sayısı\n- Genişleme yuvaları (PCIe, M.2, SATA)\n- Ağ bağlantısı\n- Form faktörü (ATX, mATX, ITX vb.)';
+      } else if (categoryLower.includes('işlemci') || categoryLower.includes('cpu') || categoryLower.includes('processor')) {
+        categoryGuidance = '\n\nBu ürün bir işlemci olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- İşlemci ailesi ve modeli\n- Çekirdek sayısı ve thread sayısı\n- Temel ve boost saat hızı\n- Önbellek (cache) miktarı\n- TDP (Termal Tasarım Gücü)\n- Soket tipi\n- Üretim teknolojisi (nm)';
+      } else if (categoryLower.includes('ekran kartı') || categoryLower.includes('gpu') || categoryLower.includes('graphics')) {
+        categoryGuidance = '\n\nBu ürün bir ekran kartı olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- GPU modeli ve mimarisi\n- Video belleği (VRAM) miktarı ve tipi\n- Çekirdek saat hızı ve boost hızı\n- Bellek arayüzü ve bant genişliği\n- Güç tüketimi (TDP)\n- Bağlantı portları (HDMI, DisplayPort vb.)';
+      } else if (categoryLower.includes('ram') || categoryLower.includes('bellek') || categoryLower.includes('memory')) {
+        categoryGuidance = '\n\nBu ürün bir RAM modülü olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- Bellek tipi (DDR4, DDR5 vb.)\n- Kapasite (GB)\n- Hız (MHz)\n- Gecikme süreleri (CL timings)\n- Voltaj\n- Form faktörü (DIMM, SODIMM vb.)';
+      } else if (categoryLower.includes('depolama') || categoryLower.includes('ssd') || categoryLower.includes('hdd') || categoryLower.includes('hard disk')) {
+        categoryGuidance = '\n\nBu ürün bir depolama birimi olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- Depolama kapasitesi\n- Arayüz (SATA, NVMe, PCIe vb.)\n- Okuma/yazma hızları\n- Form faktörü (2.5", M.2, 3.5" vb.)\n- Dayanıklılık (TBW - Total Bytes Written)\n- Kontrolcü tipi';
+      } else if (categoryLower.includes('televizyon') || categoryLower.includes('tv') || categoryLower.includes('monitör') || categoryLower.includes('display')) {
+        categoryGuidance = '\n\nBu ürün bir görüntüleme cihazı olduğu için, aşağıdaki özellikleri öncelikle vurgulayın:\n- Ekran boyutu (inç)\n- Çözünürlük (4K, Full HD vb.)\n- Panel tipi (LED, OLED, QLED vb.)\n- Yenileme hızı (Hz)\n- Bağlantı portları (HDMI, USB, Wi-Fi vb.)\n- Ses sistemi\n- Akıllı TV özellikleri (varsa)';
+      } else {
+        categoryGuidance = `\n\nBu ürün "${categoryName}" kategorisinde olduğu için, bu kategoriye uygun teknik özellikleri ve bilgileri vurgulayın.`;
+      }
+    }
+    
     // Prepare the prompt for Gemini
     const prompt = `Lütfen aşağıdaki ürün için kısa ve özlü bir açıklama oluşturun:
 
 Ürün Adı: ${productName}
-Marka: ${brand || 'Bilinmiyor'}
-Özellikler: ${features || 'Bilgi yok'}
+Marka: ${brand || 'Bilinmiyor'}${categoryContext}
+Özellikler: ${features || 'Bilgi yok'}${categoryGuidance}
 
 Açıklama aşağıdaki HTML tablo formatında başlamalı:
 <div><strong><br /><table style="border-collapse:collapse;width:100%;"><tbody>
 
 <tr><td>&nbsp;Özellik</td><td>Değer&nbsp;</td></tr>
 
-<tr><td>&nbsp;Ürün Tipi</td><td>&nbsp;Workstation Anakartı&nbsp;</td></tr>
+<tr><td>&nbsp;Ürün Tipi</td><td>&nbsp;${categoryName || 'Ürün'}&nbsp;</td></tr>
 
-<tr><td>&nbsp;Model</td><td>&nbsp;PRO WS WRX90E-SAGE SE&nbsp;</td></tr>
+<tr><td>&nbsp;Model</td><td>&nbsp;${productName}&nbsp;</td></tr>
 
-<tr><td>&nbsp;Yonga Seti</td><td>&nbsp;AMD WRX90&nbsp;</td></tr>
-
-<tr><td>&nbsp;İşlemci Desteği</td><td>&nbsp;AMD Ryzen Threadripper PRO 7000WX Serisi (sTR5 Soket)&nbsp;</td></tr>
-
-<tr><td>&nbsp;Bellek Tipi</td><td>&nbsp;8 Kanal DDR5 ECC RDIMM&nbsp;</td></tr>
-
-<tr><td>&nbsp;Genişleme Yuvaları</td><td>&nbsp;Çoklu PCIe 5.0 x16&nbsp;</td></tr>
-
-<tr><td>&nbsp;Depolama</td><td>&nbsp;M.2 (PCIe 5.0/4.0), SATA 6Gb/s&nbsp;</td></tr>
-
-<tr><td>&nbsp;Ağ Bağlantısı</td><td>&nbsp;Çift 10 Gigabit Ethernet (10GbE)&nbsp;</td></tr>
-
-<tr><td>&nbsp;Form Faktörü</td><td>&nbsp;E-ATX / CEB&nbsp;</td></tr>
-
-<tr><td>&nbsp;Fiyat</td><td>&nbsp;1200 Birim&nbsp;</td></tr>
+${categoryGuidance ? '<!-- Kategoriye özel özellikler buraya eklenecek -->' : ''}
 
 </tbody></table></strong></div><br/>
 
-Ardından ürün hakkında detaylı açıklama metni gelmeli.
+Ardından ürün hakkında detaylı açıklama metni gelmeli. Açıklama, ürünün kategorisine uygun teknik özellikleri ve kullanım alanlarını içermelidir.
 
-Lütfen ürünle ilgili tüm teknik özellikleri ve bilgileri tabloya uygun şekilde yerleştirin.`
+Lütfen ürünle ilgili tüm teknik özellikleri ve bilgileri tabloya uygun şekilde yerleştirin. Kategori bilgisini dikkate alarak, o kategoriye özgü özellikleri öncelikle vurgulayın.`
     
     // Call Gemini API directly using fetch
     const apiVersion = Deno.env.get('GEMINI_API_VERSION') || Deno.env.get('VITE_GEMINI_API_VERSION') || 'v1'

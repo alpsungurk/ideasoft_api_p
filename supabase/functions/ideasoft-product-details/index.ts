@@ -314,11 +314,15 @@ serve(async (req) => {
       productName: payload.product.name
     })
 
-    const apiUrl = `https://${shopId}.myideasoft.com/admin-api/product_details`
+    // Eğer productDetailId varsa PUT, yoksa POST yap
+    const hasProductDetailId = productDetailId !== null && productDetailId !== undefined && Number(productDetailId) > 0
+    const apiUrl = hasProductDetailId 
+      ? `https://${shopId}.myideasoft.com/admin-api/product_details/${Number(productDetailId)}`
+      : `https://${shopId}.myideasoft.com/admin-api/product_details`
     
     try {
       const response = await fetch(apiUrl, {
-        method: 'POST',
+        method: hasProductDetailId ? 'PUT' : 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
@@ -372,7 +376,7 @@ serve(async (req) => {
       )
 
       if (isDuplicate) {
-        // Duplicate ise: mevcut detail kaydını bulup id ile update dene
+        // Duplicate ise: mevcut detail kaydını bulup PUT ile update dene
         try {
           const existing = await fetchIdeasoftProductDetailForProduct({
             shopId,
@@ -381,9 +385,13 @@ serve(async (req) => {
             sku
           })
           if (existing?.id) {
-            const updatePayload = { ...payload, id: Number(existing.id) }
-            const updResp = await fetch(apiUrl, {
-              method: 'POST',
+            const existingId = Number(existing.id)
+            const updatePayload = { ...payload, id: existingId }
+            const updateUrl = `https://${shopId}.myideasoft.com/admin-api/product_details/${existingId}`
+            
+            // PUT ile güncelle
+            const updResp = await fetch(updateUrl, {
+              method: 'PUT',
               headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
@@ -393,13 +401,37 @@ serve(async (req) => {
             })
 
             if (!updResp.ok) {
-              const errorData = await updResp.json().catch(() => ({}))
-              throw { response: { status: updResp.status, data: errorData } }
+              // PUT başarısız oldu, POST ile dene
+              console.warn('⚠️ ProductDetail PUT başarısız, POST deneniyor:', updResp.status)
+              const postUrl = `https://${shopId}.myideasoft.com/admin-api/product_details`
+              const postResp = await fetch(postUrl, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
+                body: JSON.stringify(updatePayload)
+              })
+
+              if (!postResp.ok) {
+                const errorData = await postResp.json().catch(() => ({}))
+                throw { response: { status: postResp.status, data: errorData } }
+              }
+
+              const postRespData = await postResp.json()
+              console.log('✅ ProductDetail duplicate sonrası POST ile güncellendi:', { productId: ideasoftProductId, sku, productDetailId: existingId })
+              return new Response(
+                JSON.stringify({ success: true, data: postRespData, updated: true }),
+                { 
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                  status: 200 
+                }
+              )
             }
 
             const updRespData = await updResp.json()
-
-            console.log('✅ ProductDetail duplicate sonrası güncellendi:', { productId: ideasoftProductId, sku, productDetailId: existing.id })
+            console.log('✅ ProductDetail duplicate sonrası PUT ile güncellendi:', { productId: ideasoftProductId, sku, productDetailId: existingId })
             return new Response(
               JSON.stringify({ success: true, data: updRespData, updated: true }),
               { 

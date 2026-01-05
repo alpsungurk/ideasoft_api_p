@@ -1,4 +1,4 @@
-import { normalizeErrorMessage } from '../utils/errorHandler'
+import { normalizeErrorMessage, isDuplicateError } from '../utils/errorHandler'
 
 // Ideasoft API base URL - OAuth2 token ile kullanılır
 const IDEASOFT_API_BASE = 'https://api.ideasoft.com.tr/api/v1'
@@ -48,29 +48,34 @@ const getAuthHeaders = () => {
 }
 
 /**
- * Ürün-kategori ilişkisini oluştur
+ * Ürün-kategori ilişkisini oluştur veya güncelle
  * Backend proxy üzerinden çalışır (CORS sorununu çözmek için)
  * @param {number} productId - Ürün ID
  * @param {number} categoryId - Kategori ID
  * @param {string} accessToken - OAuth2 access token
  * @param {string} shopId - Mağaza ID
  * @param {Object} productData - Ürün verisi (product objesi için)
+ * @param {number} oldCategoryId - Eski kategori ID (güncelleme için, PUT kullanılır)
  * @returns {Promise<Object>} İşlem sonucu
  */
-export const createProductCategory = async (productId, categoryId, accessToken, shopId, productData) => {
+export const createProductCategory = async (productId, categoryId, accessToken, shopId, productData, oldCategoryId = null) => {
   try {
     const apiBase = getIdeasoftApiBase()
     const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCT_TO_CATEGORIES}`
 
+    // oldCategoryId varsa PUT kullan (kategori güncellemesi), yoksa POST (yeni kategori ekleme)
+    const method = oldCategoryId !== null && oldCategoryId !== undefined ? 'PUT' : 'POST'
+
     const response = await fetch(apiUrl, {
-      method: 'POST',
+      method: method,
       headers: getAuthHeaders(),
       body: JSON.stringify({
         shopId,
         accessToken,
         productId,
         categoryId,
-        productData
+        productData,
+        oldCategoryId: oldCategoryId !== null && oldCategoryId !== undefined ? oldCategoryId : null
       })
     })
 
@@ -79,10 +84,19 @@ export const createProductCategory = async (productId, categoryId, accessToken, 
     if (data && data.success) {
       return { success: true, data: data.data }
     } else {
-      throw new Error(data?.error || 'Kategori ilişkisi oluşturulamadı')
+      // Duplicate hatası ise başarılı say (kategori ilişkisi zaten var)
+      const errorMsg = data?.error || 'Kategori ilişkisi oluşturulamadı'
+      if (isDuplicateError(errorMsg) || data?.duplicate) {
+        return { success: true, data: null, duplicate: true }
+      }
+      throw new Error(errorMsg)
     }
   } catch (error) {
     const errorMessage = error.message || 'Kategori ilişkisi oluşturulamadı'
+    // Duplicate hatası ise başarılı say
+    if (isDuplicateError(errorMessage)) {
+      return { success: true, data: null, duplicate: true }
+    }
     return {
       success: false,
       error: normalizeErrorMessage(errorMessage),
@@ -91,8 +105,19 @@ export const createProductCategory = async (productId, categoryId, accessToken, 
   }
 }
 
-export const postProductImage = async ({ shopId, accessToken, localProductId, imageUrl, ideasoftProductId }) => {
+export const postProductImage = async ({ shopId, accessToken, localProductId, imageUrl, ideasoftProductId, productImageId = null }) => {
   try {
+    // Image URL'ini düzelt: // ile başlıyorsa https:// ekle
+    let normalizedImageUrl = String(imageUrl || '').trim()
+    if (normalizedImageUrl && normalizedImageUrl.startsWith('//')) {
+      normalizedImageUrl = 'https:' + normalizedImageUrl
+    }
+    
+    // Eğer URL hala geçersizse, hata döndür
+    if (normalizedImageUrl && !normalizedImageUrl.match(/^https?:\/\//i)) {
+      return { success: false, error: normalizeErrorMessage(`Geçersiz image URL: ${imageUrl}`) }
+    }
+    
     const apiBase = getIdeasoftApiBase()
     const apiUrl = `${apiBase}/${IDEASOFT_EDGE_FUNCTIONS.PRODUCT_IMAGES}`
     
@@ -103,8 +128,9 @@ export const postProductImage = async ({ shopId, accessToken, localProductId, im
         shopId,
         accessToken,
         localProductId,
-        imageUrl,
-        ideasoftProductId
+        imageUrl: normalizedImageUrl,
+        ideasoftProductId,
+        productImageId: productImageId !== null && productImageId !== undefined ? Number(productImageId) : null // PUT için ID gönder
       })
     })
 
@@ -274,12 +300,19 @@ export const bulkCreateProducts = async (products, accessToken, shopId, onProgre
   return results
 }
 
-export const postProductDetail = async ({ shopId, accessToken, localProductId, details, extraDetails }) => {
+export const postProductDetail = async ({ shopId, accessToken, localProductId, details, extraDetails, productDetailId = null }) => {
   try {
     // Parametre validasyonu
     if (!localProductId) {
       return { success: false, error: normalizeErrorMessage('localProductId gerekli') }
     }
+    
+    // localProductId'yi number'a çevir ve kontrol et
+    const productId = Number(localProductId)
+    if (isNaN(productId) || productId <= 0) {
+      return { success: false, error: normalizeErrorMessage(`Geçersiz localProductId: ${localProductId}`) }
+    }
+    
     if (!shopId || !accessToken) {
       return { success: false, error: normalizeErrorMessage('shopId ve accessToken gerekli') }
     }
@@ -293,9 +326,10 @@ export const postProductDetail = async ({ shopId, accessToken, localProductId, d
       body: JSON.stringify({
         shopId,
         accessToken,
-        localProductId: Number(localProductId), // Number'a çevir
+        localProductId: productId,
         details: String(details || '').trim(),
-        extraDetails: String(extraDetails || '').trim()
+        extraDetails: String(extraDetails || '').trim(),
+        productDetailId: productDetailId !== null && productDetailId !== undefined ? Number(productDetailId) : null // PUT için ID gönder
       })
     })
 
@@ -341,7 +375,7 @@ export const getIdeasoftProductsBatch = async ({ shopId, accessToken, productIds
   }
 }
 
-export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, productData }) => {
+export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, productData, oldRemoteData = null }) => {
   try {
     const { categoryId, ...rest } = productData || {}
     const apiBase = getIdeasoftApiBase()
@@ -354,29 +388,72 @@ export const updateIdeasoftProduct = async ({ shopId, accessToken, productId, pr
       body: JSON.stringify({ shopId, accessToken, productId, productData: rest })
     })
 
+    // Response status kontrolü
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      const errorMessage = errorData?.error || `HTTP ${response.status}: ${response.statusText}`
+      return { 
+        success: false, 
+        error: normalizeErrorMessage(errorMessage), 
+        statusCode: response.status,
+        code: response.status
+      }
+    }
+
     const data = await response.json().catch(() => ({}))
 
     if (data && data.success) {
       const updated = data.data
-      if (categoryId) {
+      if (categoryId !== undefined && categoryId !== null) {
+        // Eski kategori ID'sini bul (_remote verisinden veya güncellenmiş veriden)
+        let oldCategoryId = null
+        
+        // Önce _remote verisinden al (güncelleme öncesi kategori)
+        if (oldRemoteData?.categories && Array.isArray(oldRemoteData.categories) && oldRemoteData.categories.length > 0) {
+          oldCategoryId = Number(oldRemoteData.categories[0].id)
+        }
+        
+        // Eğer _remote'da yoksa, güncellenmiş veriden al
+        if (!oldCategoryId && updated.categories && Array.isArray(updated.categories) && updated.categories.length > 0) {
+          oldCategoryId = Number(updated.categories[0].id)
+        }
+        
+        // Kategori değiştiyse PUT kullan (DELETE + POST), yoksa POST
+        // Eğer eski kategori varsa ve yeni kategori farklıysa PUT kullan
+        const usePut = oldCategoryId !== null && oldCategoryId !== Number(categoryId)
+        
+        // PUT kullanılacaksa oldCategoryId gönder (kategori ID'si olarak)
+        // Edge function bunu kullanarak mevcut kategori ilişkilerini silecek
         const catRes = await createProductCategory(
           Number(productId),
           Number(categoryId),
           accessToken,
           shopId,
-          { ...rest, ...updated }
+          { ...rest, ...updated },
+          usePut ? oldCategoryId : null
         )
-        if (!catRes?.success) {
+        // Duplicate hatası ise başarılı say (kategori ilişkisi zaten var)
+        if (!catRes?.success && !catRes?.duplicate && !isDuplicateError(catRes?.error)) {
           return { success: true, data: updated, warning: catRes?.error || 'Kategori ilişkisi güncellenemedi' }
         }
       }
       return { success: true, data: updated }
     }
 
-    return { success: false, error: normalizeErrorMessage(data?.error || 'Ürün güncellenemedi') }
+    return { 
+      success: false, 
+      error: normalizeErrorMessage(data?.error || 'Ürün güncellenemedi'),
+      statusCode: data?.statusCode,
+      code: data?.statusCode
+    }
   } catch (error) {
     const errorMessage = error.message || 'Ürün güncellenemedi'
-    return { success: false, error: normalizeErrorMessage(errorMessage), statusCode: error.status }
+    return { 
+      success: false, 
+      error: normalizeErrorMessage(errorMessage), 
+      statusCode: error.status,
+      code: error.status
+    }
   }
 }
 

@@ -274,7 +274,9 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                     body: JSON.stringify({
                         productName: product.name || product.sku || 'Ürün',
                         brand: product.brand || '',
-                        features: `Fiyat: ${product.price}, Stok: ${product.stockAmount}, Kategori: ${product.categoryId}`,
+                        features: `Fiyat: ${product.price}, Stok: ${product.stockAmount}`,
+                        categoryName: product.categoryName || '',
+                        categoryId: product.categoryId || null,
                         geminiApiKey: keyToUse
                     })
                 });
@@ -696,7 +698,7 @@ const ProductImporter = ({ onComplete, appConfig, onStepChange }) => {
                 <div className="progress-overlay">
                     <div className="progress-card">
                         <div className="spinner" style={{ margin: '0 auto 16px', width: '40px', height: '40px' }}></div>
-                        <h3>Kategoriler yükleniyor...</h3>
+                        <h3>Hazırlanıyor...</h3>
                     </div>
                 </div>
             )}
